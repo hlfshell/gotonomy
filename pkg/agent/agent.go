@@ -261,11 +261,11 @@ func (a *BaseAgent) Config() AgentConfig {
 // This is a basic implementation that should be overridden by specific agent types.
 func (a *BaseAgent) Execute(ctx context.Context, params AgentParameters) (AgentResult, error) {
 	// Get or create ExecutionContext
-	execCtx := GetOrCreateExecutionContext(ctx)
+	execCtx := InitContext(ctx)
 	ctx = execCtx // Use ExecutionContext as the context going forward
 
-	// Create agent execution node
-	agentNode, err := execCtx.CreateChildNode("agent", a.name, map[string]interface{}{
+	// Create agent execution node and set as current
+	agentNode, err := execCtx.PushCurrentNode("agent", a.name, map[string]interface{}{
 		"input":    params.Input,
 		"agent_id": a.id,
 	})

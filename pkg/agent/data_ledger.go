@@ -22,6 +22,10 @@ func SetData[T any](ec *ExecutionContext, key string, value T) error {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 
+	if ec.current == nil {
+		return fmt.Errorf("cannot set data: no current node")
+	}
+
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value for key %s: %w", key, err)
@@ -47,6 +51,10 @@ func GetData[T any](ec *ExecutionContext, key string) (T, bool) {
 	defer ec.mu.RUnlock()
 
 	var zero T
+	if ec.current == nil {
+		return zero, false
+	}
+
 	if ec.current.Data == nil {
 		return zero, false
 	}
@@ -77,7 +85,7 @@ func (ec *ExecutionContext) GetDataHistory(key string) []DataLedgerEntry {
 	ec.mu.RLock()
 	defer ec.mu.RUnlock()
 
-	if ec.current.Data == nil {
+	if ec.current == nil || ec.current.Data == nil {
 		return []DataLedgerEntry{}
 	}
 
@@ -153,6 +161,10 @@ func (ec *ExecutionContext) GetExecutionDataHistory(key string) []DataLedgerEntr
 func (ec *ExecutionContext) DeleteData(key string) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
+
+	if ec.current == nil {
+		return // Silently ignore if no current node
+	}
 
 	if ec.current.Data == nil {
 		ec.current.Data = []DataLedgerEntry{}

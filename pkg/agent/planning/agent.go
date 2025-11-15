@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hlfshell/gogentic/pkg/model"
 	arkaineparser "github.com/hlfshell/go-arkaine-parser"
+	"github.com/hlfshell/gogentic/pkg/model"
 
 	"github.com/hlfshell/gogentic/pkg/agent"
 )
@@ -126,11 +126,11 @@ func NewPlanningAgent(id, name, description string, config PlanningAgentConfig) 
 // Execute processes the given parameters and returns a result.
 func (a *PlanningAgent) Execute(ctx context.Context, params agent.AgentParameters) (agent.AgentResult, error) {
 	// Get or create ExecutionContext
-	execCtx := agent.GetOrCreateExecutionContext(ctx)
+	execCtx := agent.InitContext(ctx)
 	ctx = execCtx // Use ExecutionContext as the context going forward
 
-	// Create agent execution node
-	agentNode, err := execCtx.CreateChildNode("agent", a.BaseAgent.Name(), map[string]interface{}{
+	// Create agent execution node and set as current
+	agentNode, err := execCtx.PushCurrentNode("agent", a.BaseAgent.Name(), map[string]interface{}{
 		"input":      params.Input,
 		"agent_id":   a.BaseAgent.ID(),
 		"agent_type": "planning",

@@ -74,18 +74,38 @@ func AsExecutionContext(ctx context.Context) (*ExecutionContext, bool) {
 	return nil, false
 }
 
-// GetOrCreateExecutionContext gets existing ExecutionContext or creates a new one
-func GetOrCreateExecutionContext(ctx context.Context) *ExecutionContext {
+// InitContext gets existing ExecutionContext or creates a new one
+// as needed for simplicity.
+func InitContext(ctx context.Context) *ExecutionContext {
 	if execCtx, ok := AsExecutionContext(ctx); ok {
 		return execCtx
 	}
 	return NewExecutionContext(ctx)
 }
 
-// CreateChildNode creates a new child node and sets it as current
+// CreateChildNode creates a new child node under the specified parent (or current if parent is nil).
+// The new node is NOT automatically set as current - use SetCurrentNode() if needed.
+// This allows the DAG to have multiple active nodes and explicit navigation.
 func (ec *ExecutionContext) CreateChildNode(nodeType, name string, input any) (*Node, error) {
+	return ec.CreateChildNodeUnder(nil, nodeType, name, input)
+}
+
+// CreateChildNodeUnder creates a new child node under the specified parent node.
+// If parent is nil, uses the current node as parent.
+// The new node is NOT automatically set as current - use SetCurrentNode() if needed.
+func (ec *ExecutionContext) CreateChildNodeUnder(parent *Node, nodeType, name string, input any) (*Node, error) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
+
+	// Use current as parent if not specified
+	if parent == nil {
+		parent = ec.current
+	}
+
+	// Validate parent exists in the DAG
+	if parent == nil {
+		return nil, fmt.Errorf("cannot create child node: no parent specified and no current node")
+	}
 
 	var inputData json.RawMessage
 	var err error
@@ -98,7 +118,7 @@ func (ec *ExecutionContext) CreateChildNode(nodeType, name string, input any) (*
 
 	child := &Node{
 		ID:        uuid.New().String(),
-		ParentID:  ec.current.ID,
+		ParentID:  parent.ID,
 		Type:      nodeType,
 		Name:      name,
 		Input:     inputData,
@@ -108,16 +128,92 @@ func (ec *ExecutionContext) CreateChildNode(nodeType, name string, input any) (*
 		StartTime: time.Now(),
 	}
 
-	ec.current.Children = append(ec.current.Children, child)
-	ec.current = child
+	parent.Children = append(parent.Children, child)
 
 	return child, nil
+}
+
+// SetCurrentNode explicitly sets which node is current for operations like SetOutput, GetData, etc.
+func (ec *ExecutionContext) SetCurrentNode(node *Node) error {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+
+	// Validate node exists in the DAG
+	if node != nil && !ec.nodeExistsInDAG(node) {
+		return fmt.Errorf("node %s does not exist in the execution DAG", node.ID)
+	}
+
+	ec.current = node
+	return nil
+}
+
+// nodeExistsInDAG checks if a node exists in the DAG by searching from root
+func (ec *ExecutionContext) nodeExistsInDAG(node *Node) bool {
+	if node == nil {
+		return false
+	}
+	found := findNodeByID(ec.root, node.ID)
+	return found != nil
+}
+
+// GetNodeByID finds a node in the DAG by its ID
+func (ec *ExecutionContext) GetNodeByID(id string) *Node {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+	return findNodeByID(ec.root, id)
+}
+
+// GetParentNode returns the parent of the given node, or nil if it's the root
+func (ec *ExecutionContext) GetParentNode(node *Node) *Node {
+	ec.mu.RLock()
+	defer ec.mu.RUnlock()
+
+	if node == nil || node.ParentID == "" {
+		return nil
+	}
+
+	return findNodeByID(ec.root, node.ParentID)
+}
+
+// PushCurrentNode creates a child node and sets it as current (convenience method for stack-like behavior)
+func (ec *ExecutionContext) PushCurrentNode(nodeType, name string, input any) (*Node, error) {
+	child, err := ec.CreateChildNode(nodeType, name, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := ec.SetCurrentNode(child); err != nil {
+		return nil, err
+	}
+	return child, nil
+}
+
+// PopCurrentNode moves current to the parent node (convenience method for stack-like behavior)
+func (ec *ExecutionContext) PopCurrentNode() (*Node, error) {
+	ec.mu.Lock()
+	defer ec.mu.Unlock()
+
+	if ec.current == nil {
+		return nil, fmt.Errorf("no current node to pop")
+	}
+
+	parent := findNodeByID(ec.root, ec.current.ParentID)
+	if parent == nil {
+		// Already at root or orphaned node
+		return nil, fmt.Errorf("cannot pop: current node has no parent")
+	}
+
+	ec.current = parent
+	return parent, nil
 }
 
 // SetOutput sets the output for the current node
 func SetOutput[T any](ec *ExecutionContext, output T) error {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
+
+	if ec.current == nil {
+		return fmt.Errorf("cannot set output: no current node")
+	}
 
 	data, err := json.Marshal(output)
 	if err != nil {
@@ -136,6 +232,10 @@ func GetOutput[T any](ec *ExecutionContext) (T, bool) {
 	defer ec.mu.RUnlock()
 
 	var zero T
+	if ec.current == nil {
+		return zero, false
+	}
+
 	if len(ec.current.Output) == 0 {
 		return zero, false
 	}
@@ -153,6 +253,10 @@ func (ec *ExecutionContext) SetError(err error) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 
+	if ec.current == nil {
+		return // Silently ignore if no current node
+	}
+
 	if err != nil {
 		ec.current.Error = err.Error()
 	} else {
@@ -166,6 +270,9 @@ func (ec *ExecutionContext) SetError(err error) {
 func (ec *ExecutionContext) GetError() string {
 	ec.mu.RLock()
 	defer ec.mu.RUnlock()
+	if ec.current == nil {
+		return ""
+	}
 	return ec.current.Error
 }
 
@@ -173,6 +280,10 @@ func (ec *ExecutionContext) GetError() string {
 func SetMetadata[T any](ec *ExecutionContext, key string, value T) error {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
+
+	if ec.current == nil {
+		return fmt.Errorf("cannot set metadata: no current node")
+	}
 
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -192,6 +303,10 @@ func GetMetadata[T any](ec *ExecutionContext, key string) (T, bool) {
 	defer ec.mu.RUnlock()
 
 	var zero T
+	if ec.current == nil {
+		return zero, false
+	}
+
 	if ec.current.Metadata == nil {
 		return zero, false
 	}

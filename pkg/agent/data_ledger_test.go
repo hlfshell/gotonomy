@@ -404,10 +404,10 @@ func TestDataIsolationBetweenNodes(t *testing.T) {
 	ctx := context.Background()
 	execCtx := NewExecutionContext(ctx)
 
-	// Create first child node
-	_, err := execCtx.CreateChildNode("agent", "agent1", nil)
+	// Create first child node and set as current
+	child1, err := execCtx.PushCurrentNode("agent", "agent1", nil)
 	if err != nil {
-		t.Fatalf("CreateChildNode failed: %v", err)
+		t.Fatalf("PushCurrentNode failed: %v", err)
 	}
 
 	// Set data in first node
@@ -416,13 +416,15 @@ func TestDataIsolationBetweenNodes(t *testing.T) {
 		t.Fatalf("SetData failed: %v", err)
 	}
 
-	// Create second child node (from root)
-	root := execCtx.GetRootNode()
-	execCtx.current = root // Reset to root
-
-	_, err = execCtx.CreateChildNode("agent", "agent2", nil)
+	// Reset to root and create second child node
+	err = execCtx.SetCurrentNode(execCtx.GetRootNode())
 	if err != nil {
-		t.Fatalf("CreateChildNode failed: %v", err)
+		t.Fatalf("SetCurrentNode failed: %v", err)
+	}
+
+	_, err = execCtx.PushCurrentNode("agent", "agent2", nil)
+	if err != nil {
+		t.Fatalf("PushCurrentNode failed: %v", err)
 	}
 
 	// Verify data from first node is not accessible in second node
@@ -445,6 +447,26 @@ func TestDataIsolationBetweenNodes(t *testing.T) {
 	if value != "node2_value" {
 		t.Errorf("Expected value 'node2_value', got %q", value)
 	}
+
+	// Verify we can switch back to first node and access its data
+	err = execCtx.SetCurrentNode(child1)
+	if err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
+	}
+
+	value1, ok := GetData[string](execCtx, "node1_key")
+	if !ok {
+		t.Fatal("Data should be accessible when switching back to first node")
+	}
+	if value1 != "node1_value" {
+		t.Errorf("Expected value 'node1_value', got %q", value1)
+	}
+
+	// Verify second node's data is not accessible from first node
+	_, ok = GetData[string](execCtx, "node2_key")
+	if ok {
+		t.Fatal("Data from second node should not be accessible in first node")
+	}
 }
 
 func TestExecutionDataSharedAcrossNodes(t *testing.T) {
@@ -457,10 +479,10 @@ func TestExecutionDataSharedAcrossNodes(t *testing.T) {
 		t.Fatalf("SetExecutionData failed: %v", err)
 	}
 
-	// Create first child node
-	_, err = execCtx.CreateChildNode("agent", "agent1", nil)
+	// Create first child node and set as current
+	_, err = execCtx.PushCurrentNode("agent", "agent1", nil)
 	if err != nil {
-		t.Fatalf("CreateChildNode failed: %v", err)
+		t.Fatalf("PushCurrentNode failed: %v", err)
 	}
 
 	// Verify execution data is accessible
@@ -472,13 +494,15 @@ func TestExecutionDataSharedAcrossNodes(t *testing.T) {
 		t.Errorf("Expected value 'shared_value', got %q", value)
 	}
 
-	// Create second child node (from root)
-	root := execCtx.GetRootNode()
-	execCtx.current = root // Reset to root
-
-	_, err = execCtx.CreateChildNode("agent", "agent2", nil)
+	// Reset to root and create second child node
+	err = execCtx.SetCurrentNode(execCtx.GetRootNode())
 	if err != nil {
-		t.Fatalf("CreateChildNode failed: %v", err)
+		t.Fatalf("SetCurrentNode failed: %v", err)
+	}
+
+	_, err = execCtx.PushCurrentNode("agent", "agent2", nil)
+	if err != nil {
+		t.Fatalf("PushCurrentNode failed: %v", err)
 	}
 
 	// Verify execution data is still accessible
