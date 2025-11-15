@@ -1,5 +1,4 @@
-module github.com/hlfshell/go-agents
-
+module github.com/hlfshell/gogentic
 go 1.24.2
 
 require (

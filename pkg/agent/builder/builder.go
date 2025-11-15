@@ -1,13 +1,15 @@
-// Package agent provides interfaces and implementations for building AI agents
-// that can use language models to accomplish tasks.
-package agent
+// Package builder provides a fluent API for building agents.
+package builder
 
 import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hlfshell/go-agents/pkg/model"
+	"github.com/hlfshell/gogentic/pkg/model"
 	arkaineparser "github.com/hlfshell/go-arkaine-parser"
+	
+	"github.com/hlfshell/gogentic/pkg/agent"
+	"github.com/hlfshell/gogentic/pkg/agent/tool"
 )
 
 // AgentBuilder helps build agents with a fluent API.
@@ -19,7 +21,7 @@ type AgentBuilder struct {
 	// description is the agent description.
 	description string
 	// config is the agent configuration.
-	config AgentConfig
+	config agent.AgentConfig
 	// agent_type is the type of agent to build.
 	agent_type string
 }
@@ -27,7 +29,7 @@ type AgentBuilder struct {
 // NewAgentBuilder creates a new agent builder.
 func NewAgentBuilder() *AgentBuilder {
 	return &AgentBuilder{
-		config:     AgentConfig{},
+		config:     agent.AgentConfig{},
 		agent_type: "base", // Default to agent
 	}
 }
@@ -63,13 +65,13 @@ func (b *AgentBuilder) WithSystemPrompt(prompt string) *AgentBuilder {
 }
 
 // WithTool adds a tool to the agent.
-func (b *AgentBuilder) WithTool(tool Tool) *AgentBuilder {
+func (b *AgentBuilder) WithTool(tool agent.Tool) *AgentBuilder {
 	b.config.Tools = append(b.config.Tools, tool)
 	return b
 }
 
 // WithTools adds multiple tools to the agent.
-func (b *AgentBuilder) WithTools(tools []Tool) *AgentBuilder {
+func (b *AgentBuilder) WithTools(tools []agent.Tool) *AgentBuilder {
 	b.config.Tools = append(b.config.Tools, tools...)
 	return b
 }
@@ -130,7 +132,7 @@ func (b *AgentBuilder) AsReasoningAgent() *AgentBuilder {
 }
 
 // Build creates the agent.
-func (b *AgentBuilder) Build() (Agent, error) {
+func (b *AgentBuilder) Build() (agent.Agent, error) {
 	// Generate ID if not provided
 	if b.id == "" {
 		b.id = uuid.New().String()
@@ -148,9 +150,9 @@ func (b *AgentBuilder) Build() (Agent, error) {
 	// Create the appropriate agent type
 	switch b.agent_type {
 	case "base":
-		return NewBaseAgent(b.id, b.name, b.description, b.config), nil
+		return agent.NewBaseAgent(b.id, b.name, b.description, b.config), nil
 	case "tool":
-		return NewToolAgent(b.id, b.name, b.description, b.config), nil
+		return tool.NewToolAgent(b.id, b.name, b.description, b.config), nil
 	default:
 		return nil, nil
 	}
