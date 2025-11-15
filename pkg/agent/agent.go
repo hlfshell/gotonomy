@@ -265,12 +265,15 @@ func (a *BaseAgent) Execute(ctx context.Context, params AgentParameters) (AgentR
 	ctx = execCtx // Use ExecutionContext as the context going forward
 
 	// Create agent execution node and set as current
-	agentNode, err := execCtx.PushCurrentNode("agent", a.name, map[string]interface{}{
+	agentNode, err := execCtx.CreateChildNode(nil, "agent", a.name, map[string]interface{}{
 		"input":    params.Input,
 		"agent_id": a.id,
 	})
 	if err != nil {
 		return AgentResult{}, fmt.Errorf("failed to create agent node: %w", err)
+	}
+	if err := execCtx.SetCurrentNode(agentNode); err != nil {
+		return AgentResult{}, fmt.Errorf("failed to set current node: %w", err)
 	}
 	_ = agentNode // Use agentNode to avoid unused variable warning
 

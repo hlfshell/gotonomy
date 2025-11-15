@@ -50,7 +50,6 @@ type Tool struct {
 }
 
 // ToolHandler is a function that handles a tool call and returns a string.
-// This is kept for backward compatibility.
 type ToolHandler func(ctx context.Context, args map[string]interface{}) (string, error)
 
 // ToolHandlerInterface is an interface for tool handlers that can return any type.
@@ -155,7 +154,7 @@ type AgentResult struct {
 	// ExecutionStats contains information about the execution
 	ExecutionStats ExecutionStats
 
-	// Message is the final message from the agent (for backward compatibility)
+	// Message is the final message from the agent
 	Message Message
 
 	// ParsedOutput contains the structured output parsed by the agent's parser

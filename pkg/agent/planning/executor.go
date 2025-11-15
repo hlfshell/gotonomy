@@ -21,7 +21,7 @@ func (a *PlanningAgent) executeStep(ctx context.Context, plan string, step strin
 
 	// Create step node if ExecutionContext is available
 	if hasExecCtx {
-		stepNode, err := execCtx.CreateChildNode("step", fmt.Sprintf("step_%d", stepNum), map[string]interface{}{
+		stepNode, err := execCtx.CreateChildNode(nil, "step", fmt.Sprintf("step_%d", stepNum), map[string]interface{}{
 			"step_number": stepNum,
 			"step":        step,
 			"plan":        plan,

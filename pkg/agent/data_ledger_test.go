@@ -12,7 +12,7 @@ func TestSetData(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestGetData(t *testing.T) {
 	}
 
 	// Create child and set data
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestGetDataHistory(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestDeleteData(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestDataLedgerEntry(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -405,9 +405,12 @@ func TestDataIsolationBetweenNodes(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create first child node and set as current
-	child1, err := execCtx.PushCurrentNode("agent", "agent1", nil)
+	child1, err := execCtx.CreateChildNode(nil, "agent", "agent1", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child1); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Set data in first node
@@ -422,9 +425,12 @@ func TestDataIsolationBetweenNodes(t *testing.T) {
 		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
-	_, err = execCtx.PushCurrentNode("agent", "agent2", nil)
+	child2, err := execCtx.CreateChildNode(nil, "agent", "agent2", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child2); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Verify data from first node is not accessible in second node
@@ -480,9 +486,12 @@ func TestExecutionDataSharedAcrossNodes(t *testing.T) {
 	}
 
 	// Create first child node and set as current
-	_, err = execCtx.PushCurrentNode("agent", "agent1", nil)
+	child1, err := execCtx.CreateChildNode(nil, "agent", "agent1", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child1); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Verify execution data is accessible
@@ -500,9 +509,12 @@ func TestExecutionDataSharedAcrossNodes(t *testing.T) {
 		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
-	_, err = execCtx.PushCurrentNode("agent", "agent2", nil)
+	child2, err := execCtx.CreateChildNode(nil, "agent", "agent2", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child2); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Verify execution data is still accessible
@@ -520,7 +532,7 @@ func TestDataUpdateHistory(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -563,7 +575,7 @@ func TestComplexDataTypes(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -624,7 +636,7 @@ func TestConcurrentDataAccess(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node
-	_, err := execCtx.CreateChildNode("agent", "test", nil)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}

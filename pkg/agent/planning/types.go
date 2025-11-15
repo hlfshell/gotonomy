@@ -22,10 +22,6 @@ type PlanningAgentConfig struct {
 	Judge            agent.Agent   // Judges/evaluates step execution (any agent that returns a Judgement) (if nil, creates default judge)
 	StepExecutionAgent agent.Agent // Executes individual steps
 	
-	// Deprecated: Use Planner instead. Kept for backward compatibility.
-	PlanGenerationAgent agent.Agent
-	JudgeAgent          agent.Agent
-	
 	// PlanApprovalFunc is an optional function to approve plans
 	PlanApprovalFunc PlanApprovalFunc
 	

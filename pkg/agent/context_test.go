@@ -89,7 +89,7 @@ func TestCreateChildNode(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node (should NOT automatically set as current in DAG model)
-	child, err := execCtx.CreateChildNode("agent", "test-agent", map[string]string{"input": "test"})
+	child, err := execCtx.CreateChildNode(nil, "agent", "test-agent", map[string]string{"input": "test"})
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestCreateChildNode(t *testing.T) {
 	}
 
 	// Test with nil input
-	child2, err := execCtx.CreateChildNode("tool", "test-tool", nil)
+	child2, err := execCtx.CreateChildNode(nil, "tool", "test-tool", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode with nil input failed: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestCreateChildNodeWithInvalidInput(t *testing.T) {
 
 	// Create a channel which cannot be marshaled to JSON
 	ch := make(chan int)
-	_, err := execCtx.CreateChildNode("agent", "test", ch)
+	_, err := execCtx.CreateChildNode(nil, "agent", "test", ch)
 	if err == nil {
 		t.Fatal("CreateChildNode should fail with unmarshalable input")
 	}
@@ -161,9 +161,12 @@ func TestSetOutput(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node and set as current
-	_, err := execCtx.PushCurrentNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Set output
@@ -199,9 +202,12 @@ func TestGetOutput(t *testing.T) {
 	}
 
 	// Create child and set output
-	_, err := execCtx.PushCurrentNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	err = SetOutput(execCtx, 42)
@@ -224,9 +230,12 @@ func TestSetError(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node and set as current
-	_, err := execCtx.PushCurrentNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Set error
@@ -275,9 +284,12 @@ func TestSetMetadata(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child node and set as current
-	_, err := execCtx.PushCurrentNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	// Set metadata
@@ -321,9 +333,12 @@ func TestGetMetadata(t *testing.T) {
 	}
 
 	// Create child and set metadata
-	_, err := execCtx.PushCurrentNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	err = SetMetadata(execCtx, "test", "value")
@@ -352,7 +367,7 @@ func TestGetCurrentNode(t *testing.T) {
 	}
 
 	// Create child (doesn't automatically set as current)
-	child, err := execCtx.CreateChildNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -395,12 +410,12 @@ func TestSerialize(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create child nodes
-	_, err := execCtx.CreateChildNode("agent", "agent1", "input1")
+	_, err := execCtx.CreateChildNode(nil, "agent", "agent1", "input1")
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
-	_, err = execCtx.CreateChildNode("tool", "tool1", "input2")
+	_, err = execCtx.CreateChildNode(nil, "tool", "tool1", "input2")
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -435,9 +450,12 @@ func TestDeserializeExecutionContext(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create child node and set as current, then set some data
-	child, err := execCtx.PushCurrentNode("agent", "agent1", "input1")
+	child, err := execCtx.CreateChildNode(nil, "agent", "agent1", "input1")
 	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
 	}
 
 	err = SetOutput(execCtx, "output1")
@@ -501,12 +519,12 @@ func TestGetExecutionChain(t *testing.T) {
 	}
 
 	// Create child nodes (in DAG model, both will be children of root)
-	child1, err := execCtx.CreateChildNode("agent", "agent1", nil)
+	child1, err := execCtx.CreateChildNode(nil, "agent", "agent1", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
-	child2, err := execCtx.CreateChildNode("tool", "tool1", nil)
+	child2, err := execCtx.CreateChildNode(nil, "tool", "tool1", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -584,12 +602,12 @@ func TestFindNodeByID(t *testing.T) {
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a tree of nodes
-	child1, err := execCtx.CreateChildNode("agent", "agent1", nil)
+	child1, err := execCtx.CreateChildNode(nil, "agent", "agent1", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
-	child2, err := execCtx.CreateChildNode("tool", "tool1", nil)
+	child2, err := execCtx.CreateChildNode(nil, "tool", "tool1", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -634,7 +652,7 @@ func TestConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(id int) {
 			defer func() { done <- true }()
-			_, err := execCtx.CreateChildNode("agent", "agent", id)
+			_, err := execCtx.CreateChildNode(nil, "agent", "agent", id)
 			if err != nil {
 				t.Errorf("CreateChildNode failed: %v", err)
 			}
@@ -662,97 +680,18 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 }
 
-func TestPushCurrentNode(t *testing.T) {
-	ctx := context.Background()
-	execCtx := NewExecutionContext(ctx)
-
-	// Push a node (creates and sets as current)
-	child, err := execCtx.PushCurrentNode("agent", "test", nil)
-	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
-	}
-
-	if execCtx.current != child {
-		t.Fatal("Current should be set to the pushed node")
-	}
-
-	// Push another node
-	child2, err := execCtx.PushCurrentNode("tool", "test2", nil)
-	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
-	}
-
-	if execCtx.current != child2 {
-		t.Fatal("Current should be set to the second pushed node")
-	}
-
-	// Verify child2 is a child of child1
-	if child2.ParentID != child.ID {
-		t.Errorf("Expected child2 parent to be child1 (%s), got %s", child.ID, child2.ParentID)
-	}
-}
-
-func TestPopCurrentNode(t *testing.T) {
-	ctx := context.Background()
-	execCtx := NewExecutionContext(ctx)
-
-	// Push nodes
-	child1, err := execCtx.PushCurrentNode("agent", "test1", nil)
-	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
-	}
-
-	child2, err := execCtx.PushCurrentNode("tool", "test2", nil)
-	if err != nil {
-		t.Fatalf("PushCurrentNode failed: %v", err)
-	}
-
-	if execCtx.current != child2 {
-		t.Fatal("Current should be child2")
-	}
-
-	// Pop back to parent
-	parent, err := execCtx.PopCurrentNode()
-	if err != nil {
-		t.Fatalf("PopCurrentNode failed: %v", err)
-	}
-
-	if parent != child1 {
-		t.Errorf("Expected parent to be child1, got %v", parent)
-	}
-
-	if execCtx.current != child1 {
-		t.Fatal("Current should be child1 after pop")
-	}
-
-	// Pop again
-	root, err := execCtx.PopCurrentNode()
-	if err != nil {
-		t.Fatalf("PopCurrentNode failed: %v", err)
-	}
-
-	if root != execCtx.root {
-		t.Errorf("Expected root, got %v", root)
-	}
-
-	// Can't pop from root
-	_, err = execCtx.PopCurrentNode()
-	if err == nil {
-		t.Fatal("PopCurrentNode should fail when at root")
-	}
-}
 
 func TestSetCurrentNode(t *testing.T) {
 	ctx := context.Background()
 	execCtx := NewExecutionContext(ctx)
 
 	// Create nodes
-	child1, err := execCtx.CreateChildNode("agent", "test1", nil)
+	child1, err := execCtx.CreateChildNode(nil, "agent", "test1", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
-	child2, err := execCtx.CreateChildNode("tool", "test2", nil)
+	child2, err := execCtx.CreateChildNode(nil, "tool", "test2", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -801,7 +740,7 @@ func TestGetNodeByID(t *testing.T) {
 	}
 
 	// Create a child
-	child, err := execCtx.CreateChildNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -830,7 +769,7 @@ func TestGetParentNode(t *testing.T) {
 	}
 
 	// Create a child
-	child, err := execCtx.CreateChildNode("agent", "test", nil)
+	child, err := execCtx.CreateChildNode(nil, "agent", "test", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
@@ -842,9 +781,9 @@ func TestGetParentNode(t *testing.T) {
 	}
 
 	// Create grandchild
-	grandchild, err := execCtx.CreateChildNodeUnder(child, "tool", "grandchild", nil)
+	grandchild, err := execCtx.CreateChildNode(child, "tool", "grandchild", nil)
 	if err != nil {
-		t.Fatalf("CreateChildNodeUnder failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
 	// Get parent of grandchild
@@ -854,20 +793,20 @@ func TestGetParentNode(t *testing.T) {
 	}
 }
 
-func TestCreateChildNodeUnder(t *testing.T) {
+func TestCreateChildNodeWithParent(t *testing.T) {
 	ctx := context.Background()
 	execCtx := NewExecutionContext(ctx)
 
 	// Create a child
-	child1, err := execCtx.CreateChildNode("agent", "test1", nil)
+	child1, err := execCtx.CreateChildNode(nil, "agent", "test1", nil)
 	if err != nil {
 		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
 	// Create child under specific parent
-	child2, err := execCtx.CreateChildNodeUnder(child1, "tool", "test2", nil)
+	child2, err := execCtx.CreateChildNode(child1, "tool", "test2", nil)
 	if err != nil {
-		t.Fatalf("CreateChildNodeUnder failed: %v", err)
+		t.Fatalf("CreateChildNode failed: %v", err)
 	}
 
 	if child2.ParentID != child1.ID {
@@ -887,9 +826,9 @@ func TestCreateChildNodeUnder(t *testing.T) {
 	}
 
 	// Create child under nil (should use current)
-	child3, err := execCtx.CreateChildNodeUnder(nil, "tool", "test3", nil)
+	child3, err := execCtx.CreateChildNode(nil, "tool", "test3", nil)
 	if err != nil {
-		t.Fatalf("CreateChildNodeUnder with nil parent failed: %v", err)
+		t.Fatalf("CreateChildNode with nil parent failed: %v", err)
 	}
 
 	if child3.ParentID != execCtx.current.ID {

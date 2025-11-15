@@ -88,7 +88,6 @@ func NewPlanningAgent(id, name, description string, config PlanningAgentConfig) 
 		{Name: "RecalculatePlan", Required: true},
 	}
 
-	// Set parser labels for backward compatibility
 	if len(config.AgentConfig.ParserLabels) == 0 {
 		config.AgentConfig.ParserLabels = append(planningLabels, executionLabels...)
 		config.AgentConfig.ParserLabels = append(config.AgentConfig.ParserLabels, evaluationLabels...)
@@ -97,16 +96,6 @@ func NewPlanningAgent(id, name, description string, config PlanningAgentConfig) 
 
 	// Create the base agent
 	baseAgent := agent.NewBaseAgent(id, name, description, config.AgentConfig)
-
-	// Handle backward compatibility: convert deprecated fields to new interfaces
-	if config.Planner == nil && config.PlanGenerationAgent != nil {
-		// Wrap the old agent.Agent in a GenericPlanner
-		config.Planner = NewGenericPlanner(config.PlanGenerationAgent)
-	}
-	if config.Judge == nil && config.JudgeAgent != nil {
-		// Use the deprecated JudgeAgent directly
-		config.Judge = config.JudgeAgent
-	}
 
 	// Create sub-agents if not provided
 	if config.Planner == nil {
@@ -130,13 +119,16 @@ func (a *PlanningAgent) Execute(ctx context.Context, params agent.AgentParameter
 	ctx = execCtx // Use ExecutionContext as the context going forward
 
 	// Create agent execution node and set as current
-	agentNode, err := execCtx.PushCurrentNode("agent", a.BaseAgent.Name(), map[string]interface{}{
+	agentNode, err := execCtx.CreateChildNode(nil, "agent", a.BaseAgent.Name(), map[string]interface{}{
 		"input":      params.Input,
 		"agent_id":   a.BaseAgent.ID(),
 		"agent_type": "planning",
 	})
 	if err != nil {
 		return agent.AgentResult{}, fmt.Errorf("failed to create agent node: %w", err)
+	}
+	if err := execCtx.SetCurrentNode(agentNode); err != nil {
+		return agent.AgentResult{}, fmt.Errorf("failed to set current node: %w", err)
 	}
 	_ = agentNode
 
@@ -165,7 +157,7 @@ func (a *PlanningAgent) Execute(ctx context.Context, params agent.AgentParameter
 
 	// PHASE 1: PLAN GENERATION
 	// Create plan generation node
-	planNode, err := execCtx.CreateChildNode("phase", "plan_generation", map[string]interface{}{
+	planNode, err := execCtx.CreateChildNode(nil, "phase", "plan_generation", map[string]interface{}{
 		"input": params.Input,
 	})
 	if err == nil {
@@ -185,7 +177,7 @@ func (a *PlanningAgent) Execute(ctx context.Context, params agent.AgentParameter
 
 	// PHASE 2: STEP EXECUTION
 	// Create step execution node
-	execNode, err := execCtx.CreateChildNode("phase", "step_execution", map[string]interface{}{
+	execNode, err := execCtx.CreateChildNode(nil, "phase", "step_execution", map[string]interface{}{
 		"plan":  plan,
 		"steps": steps,
 	})
@@ -204,7 +196,7 @@ func (a *PlanningAgent) Execute(ctx context.Context, params agent.AgentParameter
 
 	// PHASE 3: FINAL ANSWER
 	// Create final answer node
-	finalNode, err := execCtx.CreateChildNode("phase", "final_answer", map[string]interface{}{
+	finalNode, err := execCtx.CreateChildNode(nil, "phase", "final_answer", map[string]interface{}{
 		"final_result": finalResult,
 	})
 	if err == nil {

@@ -83,17 +83,10 @@ func InitContext(ctx context.Context) *ExecutionContext {
 	return NewExecutionContext(ctx)
 }
 
-// CreateChildNode creates a new child node under the specified parent (or current if parent is nil).
-// The new node is NOT automatically set as current - use SetCurrentNode() if needed.
-// This allows the DAG to have multiple active nodes and explicit navigation.
-func (ec *ExecutionContext) CreateChildNode(nodeType, name string, input any) (*Node, error) {
-	return ec.CreateChildNodeUnder(nil, nodeType, name, input)
-}
-
-// CreateChildNodeUnder creates a new child node under the specified parent node.
+// CreateChildNode creates a new child node under the specified parent node.
 // If parent is nil, uses the current node as parent.
 // The new node is NOT automatically set as current - use SetCurrentNode() if needed.
-func (ec *ExecutionContext) CreateChildNodeUnder(parent *Node, nodeType, name string, input any) (*Node, error) {
+func (ec *ExecutionContext) CreateChildNode(parent *Node, nodeType, name string, input any) (*Node, error) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 
@@ -173,37 +166,6 @@ func (ec *ExecutionContext) GetParentNode(node *Node) *Node {
 	}
 
 	return findNodeByID(ec.root, node.ParentID)
-}
-
-// PushCurrentNode creates a child node and sets it as current (convenience method for stack-like behavior)
-func (ec *ExecutionContext) PushCurrentNode(nodeType, name string, input any) (*Node, error) {
-	child, err := ec.CreateChildNode(nodeType, name, input)
-	if err != nil {
-		return nil, err
-	}
-	if err := ec.SetCurrentNode(child); err != nil {
-		return nil, err
-	}
-	return child, nil
-}
-
-// PopCurrentNode moves current to the parent node (convenience method for stack-like behavior)
-func (ec *ExecutionContext) PopCurrentNode() (*Node, error) {
-	ec.mu.Lock()
-	defer ec.mu.Unlock()
-
-	if ec.current == nil {
-		return nil, fmt.Errorf("no current node to pop")
-	}
-
-	parent := findNodeByID(ec.root, ec.current.ParentID)
-	if parent == nil {
-		// Already at root or orphaned node
-		return nil, fmt.Errorf("cannot pop: current node has no parent")
-	}
-
-	ec.current = parent
-	return parent, nil
 }
 
 // SetOutput sets the output for the current node

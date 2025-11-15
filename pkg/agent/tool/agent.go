@@ -114,7 +114,7 @@ func (a *ToolAgent) processToolCalls(ctx context.Context, tool_calls []model.Too
 		var toolNode *agent.Node
 		if hasExecCtx {
 			var err error
-			toolNode, err = execCtx.CreateChildNode("tool", tool_call.Name, tool_call.Arguments)
+			toolNode, err = execCtx.CreateChildNode(nil, "tool", tool_call.Name, tool_call.Arguments)
 			if err == nil {
 				_ = toolNode
 			}
@@ -205,13 +205,16 @@ func (a *ToolAgent) Execute(ctx context.Context, params agent.AgentParameters) (
 	ctx = execCtx // Use ExecutionContext as the context going forward
 
 	// Create agent execution node and set as current
-	agentNode, err := execCtx.PushCurrentNode("agent", a.BaseAgent.Name(), map[string]interface{}{
+	agentNode, err := execCtx.CreateChildNode(nil, "agent", a.BaseAgent.Name(), map[string]interface{}{
 		"input":      params.Input,
 		"agent_id":   a.BaseAgent.ID(),
 		"agent_type": "tool",
 	})
 	if err != nil {
 		return agent.AgentResult{}, fmt.Errorf("failed to create agent node: %w", err)
+	}
+	if err := execCtx.SetCurrentNode(agentNode); err != nil {
+		return agent.AgentResult{}, fmt.Errorf("failed to set current node: %w", err)
 	}
 	_ = agentNode
 
@@ -278,7 +281,7 @@ func (a *ToolAgent) Execute(ctx context.Context, params agent.AgentParameters) (
 	tool_calls_count := 0
 	for iterations < config.MaxIterations {
 		// Create iteration node
-		iterationNode, nodeErr := execCtx.CreateChildNode("iteration", fmt.Sprintf("iteration_%d", iterations+1), map[string]interface{}{
+		iterationNode, nodeErr := execCtx.CreateChildNode(nil, "iteration", fmt.Sprintf("iteration_%d", iterations+1), map[string]interface{}{
 			"iteration_number": iterations + 1,
 		})
 		if nodeErr == nil {
