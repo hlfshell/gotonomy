@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -342,6 +343,30 @@ func DeserializeExecutionContext(ctx context.Context, data []byte) (*ExecutionCo
 		current:             current,
 		executionDataLedger: aux.ExecutionDataLedger,
 	}, nil
+}
+
+// Save writes the execution context to a file
+func (ec *ExecutionContext) Save(filename string) error {
+	data, err := ec.Serialize()
+	if err != nil {
+		return fmt.Errorf("failed to serialize execution context: %w", err)
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		return fmt.Errorf("failed to write file %s: %w", filename, err)
+	}
+
+	return nil
+}
+
+// Load reads an execution context from a file
+func Load(ctx context.Context, filename string) (*ExecutionContext, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", filename, err)
+	}
+
+	return DeserializeExecutionContext(ctx, data)
 }
 
 // findNodeByID recursively finds a node by ID

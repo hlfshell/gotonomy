@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 )
@@ -833,5 +834,165 @@ func TestCreateChildNodeWithParent(t *testing.T) {
 
 	if child3.ParentID != execCtx.current.ID {
 		t.Errorf("Expected parent ID %s (current), got %s", execCtx.current.ID, child3.ParentID)
+	}
+}
+
+func TestSaveAndLoad(t *testing.T) {
+	ctx := context.Background()
+	execCtx := NewExecutionContext(ctx)
+
+	// Create some nodes and set data
+	child1, err := execCtx.CreateChildNode(nil, "agent", "agent1", "input1")
+	if err != nil {
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+	if err := execCtx.SetCurrentNode(child1); err != nil {
+		t.Fatalf("SetCurrentNode failed: %v", err)
+	}
+
+	err = SetOutput(execCtx, "output1")
+	if err != nil {
+		t.Fatalf("SetOutput failed: %v", err)
+	}
+
+	err = SetData(execCtx, "test_key", "test_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	err = SetExecutionData(execCtx, "exec_key", "exec_value")
+	if err != nil {
+		t.Fatalf("SetExecutionData failed: %v", err)
+	}
+
+	// Create another child
+	child2, err := execCtx.CreateChildNode(nil, "tool", "tool1", "input2")
+	if err != nil {
+		t.Fatalf("CreateChildNode failed: %v", err)
+	}
+
+	// Save to a temporary file
+	tmpFile := "/tmp/test_execution_context.json"
+	defer os.Remove(tmpFile)
+
+	err = execCtx.Save(tmpFile)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(tmpFile); os.IsNotExist(err) {
+		t.Fatal("Save should create the file")
+	}
+
+	// Load from file
+	newCtx := context.Background()
+	loaded, err := Load(newCtx, tmpFile)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if loaded == nil {
+		t.Fatal("Loaded context should not be nil")
+	}
+
+	// Verify root node
+	if loaded.root == nil {
+		t.Fatal("Loaded root should not be nil")
+	}
+	if loaded.root.ID != execCtx.root.ID {
+		t.Errorf("Expected root ID %s, got %s", execCtx.root.ID, loaded.root.ID)
+	}
+
+	// Verify current node
+	if loaded.current == nil {
+		t.Fatal("Loaded current should not be nil")
+	}
+	if loaded.current.ID != execCtx.current.ID {
+		t.Errorf("Expected current ID %s, got %s", execCtx.current.ID, loaded.current.ID)
+	}
+
+	// Verify nodes exist
+	loadedChild1 := loaded.GetNodeByID(child1.ID)
+	if loadedChild1 == nil {
+		t.Fatal("child1 should exist in loaded context")
+	}
+	if loadedChild1.Name != "agent1" {
+		t.Errorf("Expected child1 name 'agent1', got %q", loadedChild1.Name)
+	}
+
+	loadedChild2 := loaded.GetNodeByID(child2.ID)
+	if loadedChild2 == nil {
+		t.Fatal("child2 should exist in loaded context")
+	}
+	if loadedChild2.Name != "tool1" {
+		t.Errorf("Expected child2 name 'tool1', got %q", loadedChild2.Name)
+	}
+
+	// Verify execution data ledger
+	if len(loaded.executionDataLedger) != 1 {
+		t.Errorf("Expected 1 execution data ledger entry, got %d", len(loaded.executionDataLedger))
+	}
+
+	// Verify we can access data from loaded context
+	loaded.SetCurrentNode(loadedChild1)
+	value, ok := GetData[string](loaded, "test_key")
+	if !ok {
+		t.Fatal("Data should be accessible in loaded context")
+	}
+	if value != "test_value" {
+		t.Errorf("Expected data value 'test_value', got %q", value)
+	}
+
+	execValue, ok := GetExecutionData[string](loaded, "exec_key")
+	if !ok {
+		t.Fatal("Execution data should be accessible in loaded context")
+	}
+	if execValue != "exec_value" {
+		t.Errorf("Expected execution data value 'exec_value', got %q", execValue)
+	}
+
+	output, ok := GetOutput[string](loaded)
+	if !ok {
+		t.Fatal("Output should be accessible in loaded context")
+	}
+	if output != "output1" {
+		t.Errorf("Expected output 'output1', got %q", output)
+	}
+}
+
+func TestSaveErrorHandling(t *testing.T) {
+	ctx := context.Background()
+	execCtx := NewExecutionContext(ctx)
+
+	// Try to save to an invalid path (directory that doesn't exist)
+	invalidPath := "/nonexistent/directory/file.json"
+	err := execCtx.Save(invalidPath)
+	if err == nil {
+		t.Fatal("Save should fail with invalid path")
+	}
+}
+
+func TestLoadErrorHandling(t *testing.T) {
+	ctx := context.Background()
+
+	// Try to load from nonexistent file
+	_, err := Load(ctx, "/nonexistent/file.json")
+	if err == nil {
+		t.Fatal("Load should fail with nonexistent file")
+	}
+
+	// Try to load invalid JSON
+	tmpFile := "/tmp/invalid_context.json"
+	defer os.Remove(tmpFile)
+
+	err = os.WriteFile(tmpFile, []byte("invalid json"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	_, err = Load(ctx, tmpFile)
+	if err == nil {
+		t.Fatal("Load should fail with invalid JSON")
 	}
 }
