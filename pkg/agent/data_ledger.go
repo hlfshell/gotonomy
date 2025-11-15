@@ -13,7 +13,7 @@ type DataLedgerEntry struct {
 	Key       string          `json:"key"`
 	Value     json.RawMessage `json:"value"`
 	Timestamp time.Time       `json:"timestamp"`
-	Operation string          `json:"operation"` // "set", "update", "delete"
+	Operation string          `json:"operation"` // "set" or "delete"
 }
 
 // SetData stores a value in the current node's data ledger
@@ -67,7 +67,7 @@ func GetData[T any](ec *ExecutionContext, key string) (T, bool) {
 			if entry.Operation == "delete" {
 				return zero, false
 			}
-			// Found a set/update entry, return its value
+			// Found a set entry, return its value
 			var value T
 			if err := json.Unmarshal(entry.Value, &value); err != nil {
 				return zero, false
@@ -131,7 +131,7 @@ func GetExecutionData[T any](ec *ExecutionContext, key string) (T, bool) {
 			if entry.Operation == "delete" {
 				return zero, false
 			}
-			// Found a set/update entry, return its value
+			// Found a set entry, return its value
 			var value T
 			if err := json.Unmarshal(entry.Value, &value); err != nil {
 				return zero, false
