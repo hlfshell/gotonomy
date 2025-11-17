@@ -45,12 +45,9 @@ type Tool struct {
 	// Parameters is a map of parameter names to their JSON schema.
 	Parameters map[string]interface{}
 	// Handler is the function that handles the tool call.
-	// Can be either ToolHandler (string return) or ToolHandlerInterface (generic return).
+	// Must implement ToolHandlerInterface.
 	Handler interface{}
 }
-
-// ToolHandler is a function that handles a tool call and returns a string.
-type ToolHandler func(ctx context.Context, args map[string]interface{}) (string, error)
 
 // ToolHandlerInterface is an interface for tool handlers that can return any type.
 // This allows tools to return typed results instead of just strings.
@@ -62,12 +59,6 @@ type ToolHandlerInterface interface {
 // GenericToolHandler wraps a generic handler function.
 type GenericToolHandler[T any] struct {
 	handler  func(ctx context.Context, args map[string]interface{}) (T, error)
-	toolName string
-}
-
-// StringToolHandler wraps a legacy ToolHandler (string return) to implement ToolHandlerInterface.
-type StringToolHandler struct {
-	handler  ToolHandler
 	toolName string
 }
 
@@ -168,12 +159,20 @@ type AgentResult struct {
 type StreamHandler func(message Message) error
 
 // Agent represents an AI agent that can execute tasks using a language model.
+// Agents also implement ToolHandlerInterface, allowing them to be used as tools
+// by other agents for hierarchical agent composition.
 type Agent interface {
 	// Execute processes the given parameters and returns a result.
 	// This is the core method that all agents must implement.
 	// If params.StreamHandler is provided and the model supports streaming,
 	// responses will be streamed incrementally.
 	Execute(ctx context.Context, params AgentParameters) (AgentResult, error)
+
+	// Call allows the agent to be used as a tool by other agents.
+	// It implements ToolHandlerInterface, enabling agent composition.
+	// The "input" key in args is used as the primary input, and all other
+	// keys are passed as AdditionalInputs.
+	Call(ctx context.Context, args map[string]interface{}) (ToolResultInterface, error)
 
 	// ID returns the unique identifier for the agent.
 	ID() string

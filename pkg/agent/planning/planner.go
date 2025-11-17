@@ -1,243 +1,366 @@
-// Package planning provides planning agent implementations.
 package planning
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	arkaineparser "github.com/hlfshell/go-arkaine-parser"
-
 	"github.com/hlfshell/gogentic/pkg/agent"
+	"github.com/hlfshell/gogentic/pkg/agent/plan"
+	"github.com/hlfshell/gogentic/pkg/assets"
+	"github.com/hlfshell/gogentic/pkg/model"
+	"github.com/hlfshell/gogentic/pkg/prompt"
 )
 
-// Planner is an interface for generating plans and final answers.
-type Planner interface {
-	// GeneratePlan generates a plan from the given input.
-	// Returns: plan (string), steps ([]interface{}), message (Message), error
-	GeneratePlan(ctx context.Context, input string, conversation *agent.Conversation, options agent.AgentOptions) (string, []interface{}, agent.Message, error)
-
-	// GenerateFinalAnswer generates a final answer based on execution results.
-	GenerateFinalAnswer(ctx context.Context, input string, finalResult string, options agent.AgentOptions) (agent.AgentResult, error)
+// PlannerAgent is an agent that creates structured plans from high-level objectives.
+type PlannerAgent struct {
+	*agent.BaseAgent
+	// promptTemplate is the cached prompt template for planning
+	promptTemplate *prompt.Template
 }
 
-// GenericPlanner is a generic implementation of Planner that uses an agent.Agent.
-type GenericPlanner struct {
-	agent agent.Agent
+// ToolInfo represents information about a tool that can be used in plan steps.
+type ToolInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	UsageNotes  string `json:"usage_notes,omitempty"`
 }
 
-// NewGenericPlanner creates a new generic planner using the provided agent.
-func NewGenericPlanner(agent agent.Agent) *GenericPlanner {
-	return &GenericPlanner{
-		agent: agent,
-	}
+// PlannerInput represents the input to the planner agent.
+type PlannerInput struct {
+	// Objective is the high-level goal to plan for
+	Objective string
+	// Tools is an optional list of tools available for use in the plan
+	Tools []ToolInfo
+	// Context provides additional context for planning
+	Context string
 }
 
-// GeneratePlan implements the Planner interface.
-func (p *GenericPlanner) GeneratePlan(ctx context.Context, input string, conversation *agent.Conversation, options agent.AgentOptions) (string, []interface{}, agent.Message, error) {
-	// Create a conversation for the planner agent
-	planConversation := &agent.Conversation{
-		ID:        uuid.New().String(),
-		Messages:  []agent.Message{},
-		Metadata:  map[string]interface{}{},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+// PlannerResult represents the result of planning.
+type PlannerResult struct {
+	// Plan is the generated plan
+	Plan *plan.Plan
+	// RawResponse is the raw LLM response
+	RawResponse string
+	// UsageStats contains token usage information
+	UsageStats model.UsageStats
+}
+
+// NewPlannerAgent creates a new planner agent with the default embedded prompt template.
+// The prompt template is loaded from the embedded assets, so no external files are required.
+func NewPlannerAgent(id, name, description string, config agent.AgentConfig) (*PlannerAgent, error) {
+	if id == "" {
+		id = uuid.New().String()
+	}
+	if name == "" {
+		name = "Planner"
+	}
+	if description == "" {
+		description = "An agent that creates structured plans from high-level objectives"
 	}
 
-	// Create a user message for the planner agent
-	planUserMessage := agent.Message{
-		Role:      "user",
-		Content:   input,
-		Timestamp: time.Now(),
+	// Create the base agent
+	baseAgent := agent.NewBaseAgent(id, name, description, config)
+
+	// Create the planner agent
+	plannerAgent := &PlannerAgent{
+		BaseAgent: baseAgent,
 	}
 
-	// Add the message to the conversation
-	planConversation.Messages = append(planConversation.Messages, planUserMessage)
-	planConversation.UpdatedAt = time.Now()
+	// Load the default embedded prompt template
+	if err := plannerAgent.LoadEmbeddedPrompt(); err != nil {
+		return nil, fmt.Errorf("failed to load default prompt template: %w", err)
+	}
 
-	// Execute the planner agent
-	planResult, err := p.agent.Execute(ctx, agent.AgentParameters{
-		Input:        input,
-		Conversation: planConversation,
-		Options:      options,
-	})
+	return plannerAgent, nil
+}
+
+// LoadEmbeddedPrompt loads the default planner prompt template from embedded assets.
+// This is the recommended way to load the prompt and is called automatically by NewPlannerAgent.
+func (a *PlannerAgent) LoadEmbeddedPrompt() error {
+	tmpl, err := assets.LoadPrompt("planner.prompt")
 	if err != nil {
-		return "", nil, agent.Message{}, fmt.Errorf("failed to generate plan: %w", err)
+		return fmt.Errorf("failed to load embedded planner prompt: %w", err)
 	}
-
-	// Get the plan from the result
-	plan := planResult.Output
-
-	// Parse the plan to extract steps
-	parsedOutput := planResult.ParsedOutput
-	stepsValue, ok := parsedOutput["Step"]
-	if !ok {
-		return "", nil, agent.Message{}, errors.New("steps not found in plan")
-	}
-	steps := stepsValue.([]interface{})
-
-	return plan, steps, planResult.Message, nil
+	a.promptTemplate = tmpl
+	return nil
 }
 
-// GenerateFinalAnswer implements the Planner interface.
-func (p *GenericPlanner) GenerateFinalAnswer(ctx context.Context, input string, finalResult string, options agent.AgentOptions) (agent.AgentResult, error) {
-	// Create a conversation for the final answer generation
-	finalConversation := &agent.Conversation{
-		ID:        uuid.New().String(),
-		Messages:  []agent.Message{},
-		Metadata:  map[string]interface{}{"final_result": finalResult},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+// LoadPromptTemplate loads a planner prompt template from a file path.
+// This method is provided for custom prompt templates. For the default prompt,
+// use LoadEmbeddedPrompt() or just call NewPlannerAgent() which loads it automatically.
+func (a *PlannerAgent) LoadPromptTemplate(templatePath string) error {
+	tmpl, err := prompt.LoadTemplate(templatePath)
+	if err != nil {
+		return fmt.Errorf("failed to load planner prompt template: %w", err)
 	}
-
-	// Create the final answer input
-	finalInput := fmt.Sprintf("You have completed all steps of your plan. Based on the results of each step, provide a final answer to the original question or task.\n\nOriginal Task: %s\n\nResults:\n%s", input, finalResult)
-
-	// Create a user message for the final answer
-	finalUserMessage := agent.Message{
-		Role:      "user",
-		Content:   finalInput,
-		Timestamp: time.Now(),
-	}
-
-	// Add the message to the final conversation
-	finalConversation.Messages = append(finalConversation.Messages, finalUserMessage)
-	finalConversation.UpdatedAt = time.Now()
-
-	// Execute the planner agent for the final answer
-	return p.agent.Execute(ctx, agent.AgentParameters{
-		Input:        finalInput,
-		Conversation: finalConversation,
-		Options:      options,
-	})
+	a.promptTemplate = tmpl
+	return nil
 }
 
-// createPlannerAgent creates a planner agent with the given configuration.
-func createPlannerAgent(config PlanningAgentConfig) Planner {
-	if config.Planner != nil {
-		return config.Planner
+// SetPromptTemplate sets the prompt template directly.
+func (a *PlannerAgent) SetPromptTemplate(tmpl *prompt.Template) {
+	a.promptTemplate = tmpl
+}
+
+// Plan creates a plan from the given objective and optional tools.
+func (a *PlannerAgent) Plan(ctx context.Context, input PlannerInput) (*PlannerResult, error) {
+	if a.promptTemplate == nil {
+		return nil, fmt.Errorf("prompt template not loaded - call LoadPromptTemplate first")
 	}
 
-	planningLabels := []arkaineparser.Label{
-		{Name: "Plan", IsBlockStart: true, Required: true},
-		{Name: "Step", IsBlockStart: true, Required: true},
-		{Name: "Reasoning", IsBlockStart: true},
+	// Prepare the template data
+	templateData := map[string]interface{}{
+		"objective": input.Objective,
+		"tools":     input.Tools,
+		"context":   input.Context,
 	}
 
-	plannerAgent := agent.NewBaseAgent(
-		uuid.New().String(),
-		"Plan Generation Agent",
-		"Agent for generating plans",
-		agent.AgentConfig{
-			Model:        config.AgentConfig.Model,
-			SystemPrompt: "You are an agent that creates detailed, step-by-step plans to accomplish tasks.",
-			MaxTokens:    config.AgentConfig.MaxTokens,
-			Temperature:  config.AgentConfig.Temperature,
-			Timeout:      config.AgentConfig.Timeout,
-			ParserLabels: planningLabels,
+	// Render the prompt
+	renderedPrompt, err := a.promptTemplate.Render(templateData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render prompt template: %w", err)
+	}
+
+	// Get the agent config
+	config := a.Config()
+
+	// Build the model messages
+	messages := []model.Message{
+		{
+			Role: "user",
+			Content: []model.Content{
+				{
+					Type: model.TextContent,
+					Text: renderedPrompt,
+				},
+			},
 		},
-	)
-
-	return NewGenericPlanner(plannerAgent)
-}
-
-// generatePlan uses the planner to create a plan.
-func (a *PlanningAgent) generatePlan(ctx context.Context, input string, conversation *agent.Conversation, options agent.AgentOptions) (string, []interface{}, agent.Message, error) {
-	return a.config.Planner.GeneratePlan(ctx, input, conversation, options)
-}
-
-// generateOrUsePriorPlan generates a new plan or uses a prior plan if provided.
-func (a *PlanningAgent) generateOrUsePriorPlan(ctx context.Context, params agent.AgentParameters, conversation *agent.Conversation, planApprovalFunc PlanApprovalFunc) (string, []interface{}, agent.Message, error) {
-	// Check if prior plan is provided
-	if a.config.PriorPlan != "" {
-		// Use the provided prior plan
-		plan := a.config.PriorPlan
-		planMessage := agent.Message{
-			Role:      "assistant",
-			Content:   a.config.PriorPlan,
-			Timestamp: time.Now(),
-		}
-
-		// Add the plan message to the conversation
-		conversation.Messages = append(conversation.Messages, planMessage)
-		conversation.UpdatedAt = time.Now()
-
-		// Parse the plan to extract steps
-		parsedOutput, _ := a.GetParser().Parse(planMessage.Content)
-		stepsValue, ok := parsedOutput["Step"]
-		if !ok {
-			return "", nil, agent.Message{}, errors.New("steps not found in prior plan")
-		}
-		steps := stepsValue.([]interface{})
-
-		return plan, steps, planMessage, nil
 	}
 
-	// Generate a new plan
-	var plan string
-	var steps []interface{}
-	var planMessage agent.Message
-	planApproved := false
-	planAttempts := 0
+	// Create the completion request
+	request := model.CompletionRequest{
+		Messages:    messages,
+		Temperature: config.Temperature,
+		MaxTokens:   config.MaxTokens,
+	}
 
-	for planAttempts < a.config.MaxPlanAttempts && !planApproved {
-		// Check for timeout
-		select {
-		case <-ctx.Done():
-			return "", nil, agent.Message{}, fmt.Errorf("execution timed out during planning: %w", ctx.Err())
-		default:
-		}
+	// Call the model
+	response, err := config.Model.Complete(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get completion from model: %w", err)
+	}
 
-		// Create planning input
-		planningInput := params.Input
-		if planAttempts > 0 {
-			// Add feedback from previous attempt
-			planningInput = fmt.Sprintf("Your previous plan was not approved. Please revise it based on the feedback.\n\nOriginal task: %s", params.Input)
-		}
+	// Parse the response into a plan
+	generatedPlan, err := a.parsePlanFromResponse(response.Text)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse plan from response: %w", err)
+	}
 
-		// Generate plan using the planner
-		var err error
-		plan, steps, planMessage, err = a.generatePlan(ctx, planningInput, conversation, params.Options)
-		if err != nil {
-			return "", nil, agent.Message{}, err
-		}
+	return &PlannerResult{
+		Plan:        generatedPlan,
+		RawResponse: response.Text,
+		UsageStats:  response.UsageStats,
+	}, nil
+}
 
-		// Add plan to conversation
-		conversation.Messages = append(conversation.Messages, planMessage)
-		conversation.UpdatedAt = time.Now()
+// parsePlanFromResponse parses the LLM response into a Plan structure.
+func (a *PlannerAgent) parsePlanFromResponse(responseText string) (*plan.Plan, error) {
+	// Clean the response - remove markdown code blocks if present
+	cleaned := cleanJSONResponse(responseText)
 
-		// Get approval for the plan
-		var feedback string
-		planApproved, feedback, err = planApprovalFunc(ctx, planMessage.Content, conversation.Messages)
-		if err != nil {
-			return "", nil, agent.Message{}, fmt.Errorf("failed to get plan approval: %w", err)
-		}
+	// Parse the JSON into a planResponse structure
+	var planResp planResponse
+	if err := json.Unmarshal([]byte(cleaned), &planResp); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal plan JSON: %w\nResponse: %s", err, cleaned)
+	}
 
-		// If not approved, add feedback to conversation
-		if !planApproved {
-			feedbackMessage := agent.Message{
-				Role:      "user",
-				Content:   feedback,
-				Timestamp: time.Now(),
+	// Convert the planResponse to a Plan
+	generatedPlan, err := a.buildPlanFromResponse(planResp)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build plan from response: %w", err)
+	}
+
+	// Validate the plan
+	if err := generatedPlan.Validate(); err != nil {
+		return nil, fmt.Errorf("generated plan failed validation: %w", err)
+	}
+
+	return generatedPlan, nil
+}
+
+// planResponse represents the JSON structure returned by the LLM.
+type planResponse struct {
+	Steps []stepResponse `json:"steps"`
+}
+
+// stepResponse represents a step in the JSON response.
+type stepResponse struct {
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Instruction  string        `json:"instruction"`
+	Expectation  string        `json:"expectation"`
+	Dependencies []string      `json:"dependencies"`
+	SubPlan      *planResponse `json:"sub_plan,omitempty"`
+}
+
+// buildPlanFromResponse converts a planResponse to a Plan.
+func (a *PlannerAgent) buildPlanFromResponse(resp planResponse) (*plan.Plan, error) {
+	// Create a new plan
+	newPlan := plan.NewPlan("")
+
+	// Build a map to track steps as we create them
+	stepMap := make(map[string]*plan.Step)
+
+	// First pass: create all steps without dependencies
+	for _, stepResp := range resp.Steps {
+		// Handle sub-plan if present
+		var subPlan *plan.Plan
+		if stepResp.SubPlan != nil {
+			var err error
+			subPlan, err = a.buildPlanFromResponse(*stepResp.SubPlan)
+			if err != nil {
+				return nil, fmt.Errorf("failed to build sub-plan for step %s: %w", stepResp.ID, err)
 			}
-			conversation.Messages = append(conversation.Messages, feedbackMessage)
-			conversation.UpdatedAt = time.Now()
 		}
 
-		planAttempts++
+		// Create the step
+		newStep := plan.NewStep(
+			stepResp.ID,
+			stepResp.Name,
+			stepResp.Instruction,
+			stepResp.Expectation,
+			nil, // Dependencies will be set in second pass
+			subPlan,
+		)
+
+		stepMap[stepResp.ID] = &newStep
+		newPlan.AddStep(newStep)
 	}
 
-	// Check if plan was approved
-	if !planApproved {
-		return "", nil, agent.Message{}, errors.New("failed to create an approved plan after maximum attempts")
+	// Second pass: set up dependencies using the map
+	for i, stepResp := range resp.Steps {
+		if len(stepResp.Dependencies) > 0 {
+			deps := make([]*plan.Step, len(stepResp.Dependencies))
+			for j, depID := range stepResp.Dependencies {
+				dep, exists := stepMap[depID]
+				if !exists {
+					return nil, fmt.Errorf("step %s has dependency on non-existent step: %s", stepResp.ID, depID)
+				}
+				deps[j] = dep
+			}
+			newPlan.Steps[i].Dependencies = deps
+		}
 	}
 
-	return plan, steps, planMessage, nil
+	return newPlan, nil
 }
 
-// generateFinalAnswer creates a final answer based on the execution results.
-func (a *PlanningAgent) generateFinalAnswer(ctx context.Context, input string, finalResult string, options agent.AgentOptions) (agent.AgentResult, error) {
-	return a.config.Planner.GenerateFinalAnswer(ctx, input, finalResult, options)
+// cleanJSONResponse removes markdown code blocks and other formatting from the response.
+func cleanJSONResponse(response string) string {
+	// Trim whitespace
+	cleaned := strings.TrimSpace(response)
+
+	// Remove markdown code blocks
+	if strings.HasPrefix(cleaned, "```json") {
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+		cleaned = strings.TrimSuffix(cleaned, "```")
+	} else if strings.HasPrefix(cleaned, "```") {
+		cleaned = strings.TrimPrefix(cleaned, "```")
+		cleaned = strings.TrimSuffix(cleaned, "```")
+	}
+
+	// Trim again after removing code blocks
+	cleaned = strings.TrimSpace(cleaned)
+
+	return cleaned
+}
+
+// Replan creates a revised plan based on feedback or new information.
+func (a *PlannerAgent) Replan(ctx context.Context, currentPlan *plan.Plan, feedback string, input PlannerInput) (*PlannerResult, error) {
+	if a.promptTemplate == nil {
+		return nil, fmt.Errorf("prompt template not loaded - call LoadPromptTemplate first")
+	}
+
+	// Build context that includes the current plan and feedback
+	enhancedContext := fmt.Sprintf("Current Plan:\n%s\n\nFeedback/Changes Needed:\n%s", currentPlan.ToText(), feedback)
+	if input.Context != "" {
+		enhancedContext = fmt.Sprintf("%s\n\nAdditional Context:\n%s", enhancedContext, input.Context)
+	}
+
+	// Update the input context
+	input.Context = enhancedContext
+
+	// Create the new plan
+	result, err := a.Plan(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create revised plan: %w", err)
+	}
+
+	// Create a diff between the old and new plan
+	diffID := uuid.New().String()
+	diff := plan.NewPlanDiff(diffID, currentPlan, result.Plan, feedback)
+	result.Plan.RevisionDiff = &diff
+
+	return result, nil
+}
+
+// Execute implements the Agent interface for PlannerAgent.
+func (a *PlannerAgent) Execute(ctx context.Context, params agent.AgentParameters) (agent.AgentResult, error) {
+	// Extract planning input from parameters
+	input := PlannerInput{
+		Objective: params.Input,
+	}
+
+	// Check for additional inputs
+	if params.AdditionalInputs != nil {
+		if tools, ok := params.AdditionalInputs["tools"].([]ToolInfo); ok {
+			input.Tools = tools
+		}
+		if context, ok := params.AdditionalInputs["context"].(string); ok {
+			input.Context = context
+		}
+	}
+
+	// Record start time
+	startTime := time.Now()
+
+	// Create the plan
+	result, err := a.Plan(ctx, input)
+	if err != nil {
+		return agent.AgentResult{}, fmt.Errorf("planning failed: %w", err)
+	}
+
+	// Record end time
+	endTime := time.Now()
+
+	// Convert the plan to text for the output
+	planText := result.Plan.ToText()
+
+	// Build the agent result
+	agentResult := agent.AgentResult{
+		Output: planText,
+		AdditionalOutputs: map[string]interface{}{
+			"plan":         result.Plan,
+			"raw_response": result.RawResponse,
+		},
+		Conversation: params.Conversation, // Pass through if provided
+		UsageStats:   result.UsageStats,
+		ExecutionStats: agent.ExecutionStats{
+			StartTime:  startTime,
+			EndTime:    endTime,
+			ToolCalls:  0, // Planner doesn't use tools
+			Iterations: 1,
+		},
+		Message: agent.Message{
+			Role:      "assistant",
+			Content:   planText,
+			Timestamp: endTime,
+		},
+	}
+
+	return agentResult, nil
 }

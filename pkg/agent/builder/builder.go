@@ -9,7 +9,6 @@ import (
 	arkaineparser "github.com/hlfshell/go-arkaine-parser"
 	
 	"github.com/hlfshell/gogentic/pkg/agent"
-	"github.com/hlfshell/gogentic/pkg/agent/tool"
 )
 
 // AgentBuilder helps build agents with a fluent API.
@@ -22,15 +21,12 @@ type AgentBuilder struct {
 	description string
 	// config is the agent configuration.
 	config agent.AgentConfig
-	// agent_type is the type of agent to build.
-	agent_type string
 }
 
 // NewAgentBuilder creates a new agent builder.
 func NewAgentBuilder() *AgentBuilder {
 	return &AgentBuilder{
-		config:     agent.AgentConfig{},
-		agent_type: "base", // Default to agent
+		config: agent.AgentConfig{},
 	}
 }
 
@@ -119,18 +115,6 @@ func (b *AgentBuilder) WithTimeout(timeout time.Duration) *AgentBuilder {
 	return b
 }
 
-// AsBaseAgent sets the agent type to base.
-func (b *AgentBuilder) AsBaseAgent() *AgentBuilder {
-	b.agent_type = "base"
-	return b
-}
-
-// AsReasoningAgent sets the agent type to reasoning.
-func (b *AgentBuilder) AsReasoningAgent() *AgentBuilder {
-	b.agent_type = "tool"
-	return b
-}
-
 // Build creates the agent.
 func (b *AgentBuilder) Build() (agent.Agent, error) {
 	// Generate ID if not provided
@@ -147,13 +131,6 @@ func (b *AgentBuilder) Build() (agent.Agent, error) {
 		b.description = "A generic AI agent"
 	}
 
-	// Create the appropriate agent type
-	switch b.agent_type {
-	case "base":
-		return agent.NewBaseAgent(b.id, b.name, b.description, b.config), nil
-	case "tool":
-		return tool.NewToolAgent(b.id, b.name, b.description, b.config), nil
-	default:
-		return nil, nil
-	}
+	// All agents are now BaseAgent with full tool-calling support
+	return agent.NewBaseAgent(b.id, b.name, b.description, b.config), nil
 }

@@ -127,29 +127,38 @@ func TestGetExecutionOrder(t *testing.T) {
 
 func TestRevisionDiff(t *testing.T) {
 	// Test that we can track plan revisions using RevisionDiff
-	oldPlan := NewPlan("plan-v1")
-	newPlan := NewPlan("plan-v2")
+	v1 := NewPlan("plan-v1")
+	step1 := NewStep("s1", "Step 1", "Do 1", "Expect 1", nil, nil)
+	v1.AddStep(step1)
 
+	v2 := NewPlan("plan-v2")
+	step1Modified := NewStep("s1", "Step 1 Modified", "Do 1 Modified", "Expect 1", nil, nil)
+	step2 := NewStep("s2", "Step 2", "Do 2", "Expect 2", nil, nil)
+	v2.AddStep(step1Modified)
+	v2.AddStep(step2)
+	
 	// Create a diff tracking the change from v1 to v2
-	diff := CreatePlanDiff(oldPlan, newPlan, "Updated plan structure")
-	if diff == nil {
-		t.Fatal("CreatePlanDiff returned nil")
+	diff := NewPlanDiff("diff-id", v1, v2, "Updated step 1 and added step 2")
+	
+	// Attach the diff to the revision
+	v2.RevisionDiff = &diff
+	
+	if v2.RevisionDiff == nil {
+		t.Fatal("Revision should have a diff")
 	}
-
-	// Create a revision by setting the diff
-	revision := NewPlan("plan-v2")
-	revision.RevisionDiff = diff
-
-	if revision.RevisionDiff == nil {
-		t.Error("Revision should have a diff")
+	if v2.RevisionDiff.FromPlanID != "plan-v1" {
+		t.Errorf("Expected FromPlanID='plan-v1', got %s", v2.RevisionDiff.FromPlanID)
 	}
-	if revision.RevisionDiff.FromID != "plan-v1" {
-		t.Errorf("Expected FromID='plan-v1', got %s", revision.RevisionDiff.FromID)
+	if v2.RevisionDiff.ToPlanID != "plan-v2" {
+		t.Errorf("Expected ToPlanID='plan-v2', got %s", v2.RevisionDiff.ToPlanID)
 	}
-	if revision.RevisionDiff.ToID != "plan-v2" {
-		t.Errorf("Expected ToID='plan-v2', got %s", revision.RevisionDiff.ToID)
+	if len(v2.RevisionDiff.Steps.Added) != 1 {
+		t.Error("Revision diff should show 1 added step")
 	}
-
+	if len(v2.RevisionDiff.Steps.Changed) != 1 {
+		t.Error("Revision diff should show 1 changed step")
+	}
+	
 	// Test that a plan without RevisionDiff has no previous plan
 	originalPlan := NewPlan("original")
 	if originalPlan.RevisionDiff != nil {
@@ -185,23 +194,6 @@ func TestGetMaxDepth(t *testing.T) {
 	plan.AddStep(step)
 	if plan.GetMaxDepth() != 2 {
 		t.Errorf("Plan with nesting should have depth 2, got %d", plan.GetMaxDepth())
-	}
-}
-
-func TestFindStepRecursive(t *testing.T) {
-	plan := NewPlan("")
-	step1 := NewStep("step1", "Step 1", "Instruction", "Expectation", nil, nil)
-	subPlan := NewPlan("sub")
-	subStep := NewStep("substep1", "Sub Step", "Instruction", "Expectation", nil, nil)
-	subPlan.AddStep(subStep)
-	step2 := NewStep("step2", "Step 2", "Instruction", "Expectation", nil, subPlan)
-
-	plan.AddStep(step1)
-	plan.AddStep(step2)
-
-	found, ok := plan.FindStepRecursive("substep1")
-	if !ok || found == nil || found.ID != "substep1" {
-		t.Errorf("Expected to find substep1, got %v", found)
 	}
 }
 

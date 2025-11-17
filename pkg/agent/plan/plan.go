@@ -19,9 +19,9 @@ type Plan struct {
 	// CreatedAt is when the plan was created.
 	CreatedAt time.Time
 	// RevisionDiff contains the diff from the previous plan if this is a revision/replan.
-	// The diff's FromID field contains the ID of the previous plan.
+	// The diff's FromPlanID field contains the ID of the previous plan.
 	// If nil, this is the original plan.
-	RevisionDiff *Diff[*Plan]
+	RevisionDiff *PlanDiff
 }
 
 // NewPlan creates a new plan with the given ID. If id is empty, a new UUID is generated.
@@ -269,75 +269,13 @@ func (p *Plan) GetMaxDepth() int {
 	return maxDepth
 }
 
-// FindStepRecursive finds a step by ID in the current plan and all nested sub-plans.
-// Returns a pointer to the step and true if found, or nil and false if not found.
-func (p *Plan) FindStepRecursive(id string) (*Step, bool) {
-	if p == nil {
-		return nil, false
-	}
-
-	// Check current plan
-	if step, found := p.FindStep(id); found {
-		return step, true
-	}
-
-	// Recursively check sub-plans
-	for _, step := range p.Steps {
-		if step.Plan != nil {
-			if foundStep, found := step.Plan.FindStepRecursive(id); found {
-				return foundStep, true
-			}
-		}
-	}
-
-	return nil, false
-}
-
 // planSerializable is a serializable version of Plan that uses step IDs instead of pointers.
 // This is used for JSON marshaling/unmarshaling.
 type planSerializable struct {
-	ID           string                `json:"id"`
-	Steps        []stepSerializable    `json:"steps"`
-	CreatedAt    time.Time             `json:"created_at"`
-	RevisionDiff *planDiffSerializable `json:"revision_diff,omitempty"`
-}
-
-// planDiffToSerializable converts a Diff[*Plan] to its serializable representation.
-func planDiffToSerializable(pd *Diff[*Plan]) *planDiffSerializable {
-	if pd == nil {
-		return nil
-	}
-	fromID := ""
-	toID := ""
-	if pd.From != nil {
-		fromID = pd.From.ID
-	}
-	if pd.To != nil {
-		toID = pd.To.ID
-	}
-	return &planDiffSerializable{
-		ID:     pd.ID,
-		Reason: pd.Reason,
-		FromID: fromID,
-		ToID:   toID,
-	}
-}
-
-// fromSerializable creates a Diff[*Plan] from its serializable representation.
-// Note: From and To pointers will be nil after deserialization since we only store IDs.
-// The caller must reconstruct the actual Plan objects if needed.
-func (pds *planDiffSerializable) fromSerializable() (*Diff[*Plan], error) {
-	if pds == nil {
-		return nil, nil
-	}
-	return &Diff[*Plan]{
-		ID:     pds.ID,
-		Reason: pds.Reason,
-		From:   nil, // Will be nil after deserialization
-		To:     nil, // Will be nil after deserialization
-		FromID: pds.FromID,
-		ToID:   pds.ToID,
-	}, nil
+	ID           string             `json:"id"`
+	Steps        []stepSerializable `json:"steps"`
+	CreatedAt    time.Time          `json:"created_at"`
+	RevisionDiff *PlanDiff          `json:"revision_diff,omitempty"`
 }
 
 // ToSerializable converts a Plan to its serializable representation.
@@ -368,16 +306,11 @@ func (p *Plan) ToSerializable() *planSerializable {
 		}
 	}
 
-	var revisionDiff *planDiffSerializable
-	if p.RevisionDiff != nil {
-		revisionDiff = planDiffToSerializable(p.RevisionDiff)
-	}
-
 	return &planSerializable{
 		ID:           p.ID,
 		Steps:        steps,
 		CreatedAt:    p.CreatedAt,
-		RevisionDiff: revisionDiff,
+		RevisionDiff: p.RevisionDiff,
 	}
 }
 
@@ -436,13 +369,7 @@ func (ps *planSerializable) FromSerializable() (*Plan, error) {
 	}
 
 	// Handle revision diff
-	if ps.RevisionDiff != nil {
-		revDiff, err := ps.RevisionDiff.fromSerializable()
-		if err != nil {
-			return nil, fmt.Errorf("failed to deserialize revision diff: %w", err)
-		}
-		plan.RevisionDiff = revDiff
-	}
+	plan.RevisionDiff = ps.RevisionDiff
 
 	return plan, nil
 }
@@ -495,9 +422,6 @@ func (p *Plan) AddStepByID(id, name, instruction, expectation string, dependency
 	return nil
 }
 
-// Ensure Plan implements Diffable
-func (p *Plan) GetID() string { return p.ID }
-
 // ToText returns a human-friendly text representation of the plan.
 func (p *Plan) ToText() string {
 	if p == nil {
@@ -517,5 +441,5 @@ func (p *Plan) ToText() string {
 		}
 	}
 
-	return strings.Join(parts, "")
+	return strings.Join(parts, "\n")
 }

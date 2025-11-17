@@ -39,9 +39,6 @@ func NewStep(id, name, instruction, expectation string, dependencies []*Step, pl
 	}
 }
 
-// Ensure Step implements Diffable
-func (s *Step) GetID() string { return s.ID }
-
 // AllDependenciesSatisfied checks if all dependencies for this step are satisfied.
 func (s *Step) AllDependenciesSatisfied(completedSteps map[string]bool) bool {
 	// If there are no dependencies, the step is ready to execute

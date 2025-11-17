@@ -1,9 +1,4 @@
-// Package tool provides a tool-using agent implementation.
-package tool
-
-import (
-	"github.com/hlfshell/gogentic/pkg/agent"
-)
+package agent
 
 // ToolBuilder helps build tool definitions with proper JSON schema.
 type ToolBuilder struct {
@@ -15,9 +10,8 @@ type ToolBuilder struct {
 	parameters map[string]interface{}
 	// required is a list of required parameter names.
 	required []string
-	// handler is the function that handles the tool call.
-	// Can be ToolHandler (legacy) or ToolHandlerInterface (new).
-	handler interface{}
+	// handler is the ToolHandlerInterface implementation for the tool.
+	handler ToolHandlerInterface
 }
 
 // NewToolBuilder creates a new tool builder.
@@ -107,14 +101,14 @@ func (b *ToolBuilder) AddObjectParameter(name, description string, properties ma
 }
 
 // SetHandler sets the handler function for the tool.
-// Accepts either ToolHandler (legacy) or ToolHandlerInterface (new).
-func (b *ToolBuilder) SetHandler(handler interface{}) *ToolBuilder {
+// Handler must implement ToolHandlerInterface.
+func (b *ToolBuilder) SetHandler(handler ToolHandlerInterface) *ToolBuilder {
 	b.handler = handler
 	return b
 }
 
 // Build builds the tool.
-func (b *ToolBuilder) Build() agent.Tool {
+func (b *ToolBuilder) Build() Tool {
 	// Create the parameters schema
 	schema := map[string]interface{}{
 		"type":       "object",
@@ -125,19 +119,12 @@ func (b *ToolBuilder) Build() agent.Tool {
 		schema["required"] = b.required
 	}
 
-	// Wrap legacy ToolHandler if needed
-	var handler interface{} = b.handler
-	if toolHandler, ok := b.handler.(agent.ToolHandler); ok {
-		// Wrap legacy handler to implement ToolHandlerInterface
-		handler = agent.NewStringToolHandler(b.name, toolHandler)
-	}
-
 	// Create and return the tool
-	return agent.Tool{
+	return Tool{
 		Name:        b.name,
 		Description: b.description,
 		Parameters:  schema,
-		Handler:     handler,
+		Handler:     b.handler,
 	}
 }
 
