@@ -1,11 +1,11 @@
-// Package agent provides interfaces and implementations for building AI agents
-// that can use language models to accomplish tasks.
-package agent
+package dataledger
 
 import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/hlfshell/gogentic/context"
 )
 
 // DataLedgerEntry represents a single entry in the data ledger tracking state changes over time
@@ -18,7 +18,7 @@ type DataLedgerEntry struct {
 
 // SetData stores a value in the current node's data ledger
 // T must be JSON-serializable
-func SetData[T any](ec *ExecutionContext, key string, value T) error {
+func SetData[T any](ec *context.ExecutionContext, key string, value T) error {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 
@@ -46,7 +46,7 @@ func SetData[T any](ec *ExecutionContext, key string, value T) error {
 }
 
 // GetData retrieves the most recent value for a key from the current node's data ledger
-func GetData[T any](ec *ExecutionContext, key string) (T, bool) {
+func GetData[T any](ec *context.ExecutionContext, key string) (T, bool) {
 	ec.mu.RLock()
 	defer ec.mu.RUnlock()
 
@@ -81,7 +81,7 @@ func GetData[T any](ec *ExecutionContext, key string) (T, bool) {
 
 // GetDataHistory returns all historical entries for a key in the current node
 // in first to last order
-func (ec *ExecutionContext) GetDataHistory(key string) []DataLedgerEntry {
+func (ec *context.ExecutionContext) GetDataHistory(key string) []DataLedgerEntry {
 	ec.mu.RLock()
 	defer ec.mu.RUnlock()
 
@@ -93,7 +93,7 @@ func (ec *ExecutionContext) GetDataHistory(key string) []DataLedgerEntry {
 }
 
 // SetExecutionData stores a value in execution-level data ledger (shared across all children)
-func SetExecutionData[T any](ec *ExecutionContext, key string, value T) error {
+func SetExecutionData[T any](ec *context.ExecutionContext, key string, value T) error {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 
@@ -114,7 +114,7 @@ func SetExecutionData[T any](ec *ExecutionContext, key string, value T) error {
 }
 
 // GetExecutionData retrieves the most recent value for a key from execution-level data ledger
-func GetExecutionData[T any](ec *ExecutionContext, key string) (T, bool) {
+func GetExecutionData[T any](ec *context.ExecutionContext, key string) (T, bool) {
 	ec.mu.RLock()
 	defer ec.mu.RUnlock()
 
@@ -144,7 +144,7 @@ func GetExecutionData[T any](ec *ExecutionContext, key string) (T, bool) {
 }
 
 // GetExecutionDataHistory returns all historical entries for a key in execution-level data
-func (ec *ExecutionContext) GetExecutionDataHistory(key string) []DataLedgerEntry {
+func (ec *context.ExecutionContext) GetExecutionDataHistory(key string) []DataLedgerEntry {
 	ec.mu.RLock()
 	defer ec.mu.RUnlock()
 
@@ -158,7 +158,7 @@ func (ec *ExecutionContext) GetExecutionDataHistory(key string) []DataLedgerEntr
 }
 
 // DeleteData marks a key as deleted in the current node's data ledger
-func (ec *ExecutionContext) DeleteData(key string) {
+func (ec *context.ExecutionContext) DeleteData(key string) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 
@@ -180,7 +180,7 @@ func (ec *ExecutionContext) DeleteData(key string) {
 }
 
 // DeleteExecutionData marks a key as deleted in execution-level data ledger
-func (ec *ExecutionContext) DeleteExecutionData(key string) {
+func (ec *context.ExecutionContext) DeleteExecutionData(key string) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 

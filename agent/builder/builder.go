@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hlfshell/gogentic/pkg/model"
 	arkaineparser "github.com/hlfshell/go-arkaine-parser"
-	
+	"github.com/hlfshell/gogentic/pkg/model"
+
 	"github.com/hlfshell/gogentic/pkg/agent"
 )
 
@@ -132,5 +132,5 @@ func (b *AgentBuilder) Build() (agent.Agent, error) {
 	}
 
 	// All agents are now BaseAgent with full tool-calling support
-	return agent.NewBaseAgent(b.id, b.name, b.description, b.config), nil
+	return agent.NewAgent(b.id, b.name, b.description, b.config), nil
 }

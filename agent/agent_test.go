@@ -114,7 +114,7 @@ func TestToolResultMarshalJSON(t *testing.T) {
 
 func TestToolResultUnmarshalJSON(t *testing.T) {
 	jsonStr := `{"tool_name":"test_tool","result":"test value","error":""}`
-	var result ToolResult[string]
+	var result Result[string]
 
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		t.Fatalf("UnmarshalJSON failed: %v", err)
@@ -147,12 +147,12 @@ func TestToolResultToJSON(t *testing.T) {
 }
 
 func TestNewGenericToolHandler(t *testing.T) {
-	handler := NewGenericToolHandler("test_tool", func(ctx context.Context, args map[string]interface{}) (int, error) {
+	handler := NewGenericToolHandler("test_tool", "A test tool", map[string]interface{}{}, func(ctx context.Context, params Arguments) (int, error) {
 		return 42, nil
 	})
 
 	ctx := context.Background()
-	result, err := handler.Call(ctx, map[string]interface{}{})
+	result, err := handler.Execute(ctx, Arguments{})
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
@@ -168,12 +168,12 @@ func TestNewGenericToolHandler(t *testing.T) {
 
 func TestGenericToolHandlerWithError(t *testing.T) {
 	testErr := errors.New("test error")
-	handler := NewGenericToolHandler("test_tool", func(ctx context.Context, args map[string]interface{}) (string, error) {
+	handler := NewGenericToolHandler("test_tool", "A test tool", map[string]interface{}{}, func(ctx context.Context, params Arguments) (string, error) {
 		return "", testErr
 	})
 
 	ctx := context.Background()
-	result, err := handler.Call(ctx, map[string]interface{}{})
+	result, err := handler.Execute(ctx, Arguments{})
 
 	if err != testErr {
 		t.Errorf("Expected error %v, got %v", testErr, err)
@@ -193,13 +193,13 @@ func TestNewBaseAgent(t *testing.T) {
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a test agent",
-		MaxTokens:    1000,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a test agent",
+		MaxTokens:   1000,
+		Temperature: 0.7,
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
 	if agent.ID() != "test-id" {
 		t.Errorf("Expected ID 'test-id', got %q", agent.ID())
@@ -226,7 +226,7 @@ func TestNewBaseAgentWithDefaults(t *testing.T) {
 		Model: mockModel,
 	}
 
-	agent := NewBaseAgent("", "test-agent", "Test description", config)
+	agent := NewAgent("", "test-agent", "Test description", config)
 
 	// Check defaults
 	if agent.Config().MaxTokens != 1000 {
@@ -265,20 +265,20 @@ func TestBaseAgentExecute(t *testing.T) {
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a test agent",
-		MaxTokens:    1000,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a test agent",
+		MaxTokens:   1000,
+		Temperature: 0.7,
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
-	params := AgentParameters{
-		Input: "Test input",
+	params := Arguments{
+		"input": "Test input",
 	}
 
 	ctx := context.Background()
-	result, err := agent.Execute(ctx, params)
+	result, err := agent.ExecuteAgent(ctx, params, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -299,51 +299,40 @@ func TestBaseAgentExecuteWithExistingConversation(t *testing.T) {
 			Provider: "test",
 		},
 		completeFunc: func(ctx context.Context, request model.CompletionRequest) (model.CompletionResponse, error) {
-			// Verify that we have 3 messages: system, existing message, and new user message
-			if len(request.Messages) != 3 {
-				t.Errorf("Expected 3 messages, got %d", len(request.Messages))
+			// Verify that we have 2 messages: system and new user message
+			// (Conversations are now always created fresh)
+			if len(request.Messages) != 2 {
+				t.Errorf("Expected 2 messages, got %d", len(request.Messages))
 			}
 			return model.CompletionResponse{
-				Text: "Response to second message",
+				Text: "Response to message",
 			}, nil
 		},
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a test agent",
-		MaxTokens:    1000,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a test agent",
+		MaxTokens:   1000,
+		Temperature: 0.7,
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
-	existingConversation := &Conversation{
-		ID: "test-conversation",
-		Messages: []Message{
-			{
-				Role:      "user",
-				Content:   "First message",
-				Timestamp: time.Now(),
-			},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+	params := Arguments{
+		"input": "Test message",
 	}
-
-	params := AgentParameters{
-		Input:        "Second message",
-		Conversation: existingConversation,
-	}
+	// Note: Conversation management is now handled separately - conversations are always created fresh
 
 	ctx := context.Background()
-	result, err := agent.Execute(ctx, params)
+	result, err := agent.ExecuteAgent(ctx, params, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
-	if len(result.Conversation.Messages) != 3 {
-		t.Errorf("Expected 3 messages in conversation, got %d", len(result.Conversation.Messages))
+	// Should have 2 messages: user message and assistant response
+	if len(result.Conversation.Messages) != 2 {
+		t.Errorf("Expected 2 messages in conversation, got %d", len(result.Conversation.Messages))
 	}
 }
 
@@ -368,26 +357,26 @@ func TestBaseAgentExecuteWithOptions(t *testing.T) {
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a test agent",
-		MaxTokens:    1000,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a test agent",
+		MaxTokens:   1000,
+		Temperature: 0.7,
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
 	temp := float32(0.9)
 	maxTokens := 500
-	params := AgentParameters{
-		Input: "Test input",
-		Options: AgentOptions{
-			Temperature: &temp,
-			MaxTokens:   &maxTokens,
-		},
+	params := Arguments{
+		"input": "Test input",
+	}
+	options := &AgentOptions{
+		Temperature: &temp,
+		MaxTokens:   &maxTokens,
 	}
 
 	ctx := context.Background()
-	_, err := agent.Execute(ctx, params)
+	_, err := agent.ExecuteAgent(ctx, params, options)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -402,7 +391,7 @@ func TestBaseAgentExecuteWithTools(t *testing.T) {
 		},
 		completeFunc: func(ctx context.Context, request model.CompletionRequest) (model.CompletionResponse, error) {
 			callCount++
-			
+
 			// Verify tools are included
 			if len(request.Tools) != 1 {
 				t.Errorf("Expected 1 tool in request, got %d", len(request.Tools))
@@ -410,7 +399,7 @@ func TestBaseAgentExecuteWithTools(t *testing.T) {
 			if request.Tools[0].Name != "test_tool" {
 				t.Errorf("Expected tool name 'test_tool', got %q", request.Tools[0].Name)
 			}
-			
+
 			// First call: return a tool call
 			// Second call (after tool execution): return final response with no tool calls
 			if callCount == 1 {
@@ -425,19 +414,19 @@ func TestBaseAgentExecuteWithTools(t *testing.T) {
 					UsageStats: model.UsageStats{
 						PromptTokens:     10,
 						CompletionTokens: 5,
-						TotalTokens:       15,
+						TotalTokens:      15,
 					},
 				}, nil
 			}
-			
+
 			// Second call after tool execution
 			return model.CompletionResponse{
-				Text: "Final response after tool execution",
+				Text:      "Final response after tool execution",
 				ToolCalls: []model.ToolCall{},
 				UsageStats: model.UsageStats{
 					PromptTokens:     10,
 					CompletionTokens: 5,
-					TotalTokens:       15,
+					TotalTokens:      15,
 				},
 			}, nil
 		},
@@ -445,36 +434,34 @@ func TestBaseAgentExecuteWithTools(t *testing.T) {
 
 	// Add a tool handler so the tool can actually be executed
 	toolCalled := false
-	
-	// Create a tool handler using NewGenericToolHandler
-	toolHandler := NewGenericToolHandler("test_tool", func(ctx context.Context, args map[string]interface{}) (string, error) {
+
+	// Create a tool using NewGenericToolHandler
+	tool := NewGenericToolHandler("test_tool", "A test tool", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"arg1": map[string]interface{}{"type": "string"},
+		},
+	}, func(ctx context.Context, params Arguments) (string, error) {
 		toolCalled = true
 		return "tool result", nil
 	})
-	
+
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a test agent",
-		MaxTokens:    1000,
-		Temperature:  0.7,
-		Tools: []Tool{
-			{
-				Name:        "test_tool",
-				Description: "A test tool",
-				Parameters:  map[string]interface{}{"arg1": map[string]interface{}{"type": "string"}},
-				Handler:     toolHandler,
-			},
-		},
+		Model:       mockModel,
+		Prompt:      "You are a test agent",
+		MaxTokens:   1000,
+		Temperature: 0.7,
+		Tools:       []GotonomyTool{tool},
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
-	params := AgentParameters{
-		Input: "Test input",
+	params := Arguments{
+		"input": "Test input",
 	}
 
 	ctx := context.Background()
-	result, err := agent.Execute(ctx, params)
+	result, err := agent.ExecuteAgent(ctx, params, nil)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -486,7 +473,7 @@ func TestBaseAgentExecuteWithTools(t *testing.T) {
 	if result.ExecutionStats.ToolCalls != 1 {
 		t.Errorf("Expected tool calls count 1, got %d", result.ExecutionStats.ToolCalls)
 	}
-	
+
 	if result.ExecutionStats.Iterations != 2 {
 		t.Errorf("Expected 2 iterations, got %d", result.ExecutionStats.Iterations)
 	}
@@ -509,16 +496,16 @@ func TestBaseAgentExecuteWithModelError(t *testing.T) {
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a test agent",
-		MaxTokens:    1000,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a test agent",
+		MaxTokens:   1000,
+		Temperature: 0.7,
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
-	params := AgentParameters{
-		Input: "Test input",
+	params := Arguments{
+		"input": "Test input",
 	}
 
 	ctx := context.Background()
@@ -552,16 +539,16 @@ func TestBaseAgentExecuteWithSystemPrompt(t *testing.T) {
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a helpful assistant",
-		MaxTokens:    1000,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a helpful assistant",
+		MaxTokens:   1000,
+		Temperature: 0.7,
 	}
 
-	agent := NewBaseAgent("test-id", "test-agent", "Test description", config)
+	agent := NewAgent("test-id", "test-agent", "Test description", config)
 
-	params := AgentParameters{
-		Input: "Test input",
+	params := Arguments{
+		"input": "Test input",
 	}
 
 	ctx := context.Background()
@@ -591,22 +578,22 @@ func TestAgentAsToolCall(t *testing.T) {
 	}
 
 	config := AgentConfig{
-		Model:        mockModel,
-		SystemPrompt: "You are a math solver",
-		MaxTokens:    100,
-		Temperature:  0.7,
+		Model:       mockModel,
+		Prompt:      "You are a math solver",
+		MaxTokens:   100,
+		Temperature: 0.7,
 	}
 
-	mathAgent := NewBaseAgent("math-agent", "Math Solver", "Solves math problems", config)
+	mathAgent := NewAgent("math-agent", "Math Solver", "Solves math problems", config)
 
 	// Call the agent as a tool using the Call method
 	ctx := context.Background()
-	args := map[string]interface{}{
+	params := Arguments{
 		"input":     "What is 2+2?",
 		"precision": "high",
 	}
 
-	result, err := mathAgent.Call(ctx, args)
+	result, err := mathAgent.Execute(ctx, params)
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
@@ -632,7 +619,7 @@ func TestAgentAsToolCall(t *testing.T) {
 
 func TestAgentAsToolInAnotherAgent(t *testing.T) {
 	callCount := 0
-	
+
 	// Create a math agent
 	mathModel := &mockModel{
 		info: model.ModelInfo{
@@ -651,11 +638,11 @@ func TestAgentAsToolInAnotherAgent(t *testing.T) {
 		},
 	}
 
-	mathAgent := NewBaseAgent("math-solver", "Math Solver", "Solves mathematical problems", AgentConfig{
-		Model:        mathModel,
-		SystemPrompt: "You are a math solver",
-		MaxTokens:    100,
-		Temperature:  0.7,
+	mathAgent := NewAgent("math-solver", "Math Solver", "Solves mathematical problems", AgentConfig{
+		Model:       mathModel,
+		Prompt:      "You are a math solver",
+		MaxTokens:   100,
+		Temperature: 0.7,
 	})
 
 	// Create a coordinator agent that uses the math agent as a tool
@@ -666,16 +653,16 @@ func TestAgentAsToolInAnotherAgent(t *testing.T) {
 		},
 		completeFunc: func(ctx context.Context, request model.CompletionRequest) (model.CompletionResponse, error) {
 			callCount++
-			
+
 			// Verify the math agent tool is available
 			if len(request.Tools) != 1 {
 				t.Errorf("Expected 1 tool, got %d", len(request.Tools))
 			}
-			
+
 			if request.Tools[0].Name != "Math Solver" {
 				t.Errorf("Expected tool name 'Math Solver', got %q", request.Tools[0].Name)
 			}
-			
+
 			// First call: use the math tool
 			if callCount == 1 {
 				return model.CompletionResponse{
@@ -695,7 +682,7 @@ func TestAgentAsToolInAnotherAgent(t *testing.T) {
 					},
 				}, nil
 			}
-			
+
 			// Second call: provide final answer after tool execution
 			return model.CompletionResponse{
 				Text: "Based on the math tool, the final answer is 42",
@@ -708,21 +695,20 @@ func TestAgentAsToolInAnotherAgent(t *testing.T) {
 		},
 	}
 
-	// Create the coordinator with the math agent as a tool
-	mathTool := NewAgentAsTool(mathAgent)
-	coordinatorAgent := NewBaseAgent("coordinator", "Coordinator", "Coordinates tasks", AgentConfig{
-		Model:        coordinatorModel,
-		SystemPrompt: "You are a coordinator that can use other agents",
-		MaxTokens:    200,
-		Temperature:  0.7,
-		Tools:        []Tool{mathTool},
+	// Create the coordinator with the math agent as a tool (agents are tools directly!)
+	coordinatorAgent := NewAgent("coordinator", "Coordinator", "Coordinates tasks", AgentConfig{
+		Model:       coordinatorModel,
+		Prompt:      "You are a coordinator that can use other agents",
+		MaxTokens:   200,
+		Temperature: 0.7,
+		Tools:       []GotonomyTool{mathAgent}, // Agents implement Tool directly!
 	})
 
 	// Execute the coordinator
 	ctx := context.Background()
-	result, err := coordinatorAgent.Execute(ctx, AgentParameters{
-		Input: "Help me solve a math problem",
-	})
+	result, err := coordinatorAgent.ExecuteAgent(ctx, Arguments{
+		"input": "Help me solve a math problem",
+	}, nil)
 
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -745,7 +731,7 @@ func TestAgentAsToolInAnotherAgent(t *testing.T) {
 	}
 }
 
-func TestNewAgentAsTool(t *testing.T) {
+func TestAgentIsTool(t *testing.T) {
 	mockModel := &mockModel{
 		info: model.ModelInfo{
 			Name:     "test-model",
@@ -758,33 +744,28 @@ func TestNewAgentAsTool(t *testing.T) {
 		},
 	}
 
-	agent := NewBaseAgent("test-agent", "Test Agent", "A test agent", AgentConfig{
+	agent := NewAgent("test-agent", "Test Agent", "A test agent", AgentConfig{
 		Model:       mockModel,
 		MaxTokens:   100,
 		Temperature: 0.7,
 	})
 
-	tool := NewAgentAsTool(agent)
+	// Verify agent implements Tool interface (agents are tools directly!)
+	var tool GotonomyTool = agent
 
 	// Verify tool properties
-	if tool.Name != "Test Agent" {
-		t.Errorf("Expected tool name 'Test Agent', got %q", tool.Name)
+	if tool.Name() != "Test Agent" {
+		t.Errorf("Expected tool name 'Test Agent', got %q", tool.Name())
 	}
 
-	if tool.Description != "A test agent" {
-		t.Errorf("Expected description 'A test agent', got %q", tool.Description)
+	if tool.Description() != "A test agent" {
+		t.Errorf("Expected description 'A test agent', got %q", tool.Description())
 	}
 
 	// Verify parameters schema
-	params := tool.Parameters
+	params := tool.Parameters()
 	if params["type"] != "object" {
 		t.Errorf("Expected type 'object', got %v", params["type"])
-	}
-
-	// Verify the handler is the agent itself (implements ToolHandlerInterface)
-	_, ok := tool.Handler.(ToolHandlerInterface)
-	if !ok {
-		t.Error("Expected handler to implement ToolHandlerInterface")
 	}
 }
 
@@ -801,32 +782,27 @@ func TestAgentCallWithAdditionalInputs(t *testing.T) {
 		},
 	}
 
-	agent := NewBaseAgent("test-agent", "Test Agent", "A test agent", AgentConfig{
+	agent := NewAgent("test-agent", "Test Agent", "A test agent", AgentConfig{
 		Model:       mockModel,
 		MaxTokens:   100,
 		Temperature: 0.7,
 	})
 
 	ctx := context.Background()
-	args := map[string]interface{}{
+	params := Arguments{
 		"input":     "Primary input",
 		"format":    "json",
 		"precision": 2,
 		"verbose":   true,
 	}
 
-	result, err := agent.Call(ctx, args)
+	result, err := agent.ExecuteAgent(ctx, params, nil)
 	if err != nil {
 		t.Fatalf("Call failed: %v", err)
 	}
 
-	agentResult, ok := result.GetResult().(AgentResult)
-	if !ok {
-		t.Fatalf("Expected AgentResult, got %T", result.GetResult())
-	}
-
 	// Verify additional inputs were passed through
-	if agentResult.AdditionalOutputs == nil {
+	if result.AdditionalOutputs == nil {
 		t.Error("Expected AdditionalOutputs to be initialized")
 	}
 }

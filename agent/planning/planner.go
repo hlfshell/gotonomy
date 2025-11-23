@@ -17,7 +17,7 @@ import (
 
 // PlannerAgent is an agent that creates structured plans from high-level objectives.
 type PlannerAgent struct {
-	*agent.BaseAgent
+	*agent.Agent
 	// promptTemplate is the cached prompt template for planning
 	promptTemplate *prompt.Template
 }
@@ -63,11 +63,11 @@ func NewPlannerAgent(id, name, description string, config agent.AgentConfig) (*P
 	}
 
 	// Create the base agent
-	baseAgent := agent.NewBaseAgent(id, name, description, config)
+	baseAgent := agent.NewAgent(id, name, description, config)
 
 	// Create the planner agent
 	plannerAgent := &PlannerAgent{
-		BaseAgent: baseAgent,
+		Agent: baseAgent,
 	}
 
 	// Load the default embedded prompt template
@@ -309,20 +309,24 @@ func (a *PlannerAgent) Replan(ctx context.Context, currentPlan *plan.Plan, feedb
 }
 
 // Execute implements the Agent interface for PlannerAgent.
-func (a *PlannerAgent) Execute(ctx context.Context, params agent.AgentParameters) (agent.AgentResult, error) {
-	// Extract planning input from parameters
+func (a *PlannerAgent) ExecuteAgent(ctx context.Context, args agent.Arguments, options *agent.AgentOptions) (agent.AgentResult, error) {
+	// Extract planning input from arguments
+	objective := ""
+	if objVal, ok := args["input"]; ok {
+		if objStr, ok := objVal.(string); ok {
+			objective = objStr
+		}
+	}
 	input := PlannerInput{
-		Objective: params.Input,
+		Objective: objective,
 	}
 
 	// Check for additional inputs
-	if params.AdditionalInputs != nil {
-		if tools, ok := params.AdditionalInputs["tools"].([]ToolInfo); ok {
-			input.Tools = tools
-		}
-		if context, ok := params.AdditionalInputs["context"].(string); ok {
-			input.Context = context
-		}
+	if tools, ok := args["tools"].([]ToolInfo); ok {
+		input.Tools = tools
+	}
+	if context, ok := args["context"].(string); ok {
+		input.Context = context
 	}
 
 	// Record start time
@@ -347,7 +351,7 @@ func (a *PlannerAgent) Execute(ctx context.Context, params agent.AgentParameters
 			"plan":         result.Plan,
 			"raw_response": result.RawResponse,
 		},
-		Conversation: params.Conversation, // Pass through if provided
+		Conversation: nil, // Conversation management handled separately
 		UsageStats:   result.UsageStats,
 		ExecutionStats: agent.ExecutionStats{
 			StartTime:  startTime,

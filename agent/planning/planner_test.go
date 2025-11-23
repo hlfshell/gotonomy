@@ -482,11 +482,11 @@ func TestPlannerAgent_Execute(t *testing.T) {
 
 	// Planner now has embedded template loaded automatically
 
-	params := agent.AgentParameters{
-		Input: "Create a simple plan",
+	params := agent.Arguments{
+		"input": "Create a simple plan",
 	}
 
-	result, err := planner.Execute(context.Background(), params)
+	result, err := planner.ExecuteAgent(context.Background(), params, nil)
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -811,20 +811,18 @@ func TestPlannerAgent_Execute_WithAdditionalInputs(t *testing.T) {
 
 	// Planner now has embedded template loaded automatically
 
-	params := agent.AgentParameters{
-		Input: "Create a plan",
-		AdditionalInputs: map[string]interface{}{
-			"context": "This is additional context",
-			"tools": []ToolInfo{
-				{
-					Name:        "tool1",
-					Description: "A test tool",
-				},
+	params := agent.Arguments{
+		"input": "Create a plan",
+		"context": "This is additional context",
+		"tools": []ToolInfo{
+			{
+				Name:        "tool1",
+				Description: "A test tool",
 			},
 		},
 	}
 
-	result, err := planner.Execute(context.Background(), params)
+	result, err := planner.ExecuteAgent(context.Background(), params, nil)
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
@@ -888,11 +886,11 @@ func TestPlannerAgent_TimestampsAndStats(t *testing.T) {
 
 	// Planner now has embedded template loaded automatically
 
-	params := agent.AgentParameters{
-		Input: "Create a plan",
+	params := agent.Arguments{
+		"input": "Create a plan",
 	}
 
-	result, err := planner.Execute(context.Background(), params)
+	result, err := planner.ExecuteAgent(context.Background(), params, nil)
 	if err != nil {
 		t.Fatalf("Failed to execute: %v", err)
 	}
