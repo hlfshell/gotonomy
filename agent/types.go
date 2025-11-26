@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/hlfshell/gogentic/model"
+	"github.com/hlfshell/gogentic/tool"
 )
 
 // Message represents a message in a conversation with an agent.
@@ -17,7 +18,7 @@ type Message struct {
 	// ToolCalls contains any tool calls made in this message.
 	ToolCalls []model.ToolCall
 	// ToolResults contains the results of any tool calls.
-	ToolResults []ResultInterface
+	ToolResults []tool.ResultInterface
 }
 
 // Conversation represents a conversation between a user and an agent.
@@ -34,11 +35,11 @@ type Conversation struct {
 	UpdatedAt time.Time
 }
 
-// ResponseParserInterface is a non-generic interface for parsers.
-// This allows agents to work with parsers without generic type constraints.
-type ResponseParserInterface func(input string) ResultInterface
+// ResponseParser is a generic function type that parses agent output text into type T.
+// It returns the parsed value and a list of parse errors (if any).
+type ResponseParser[T any] func(input string) (T, []string)
 
-type ArgumentsToPrompt func(args Arguments) (map[string]interface{}, error)
+type ArgumentsToPrompt func(args tool.Arguments) (map[string]string, error)
 
 // ExecutionStats contains statistics about an agent execution.
 type ExecutionStats struct {

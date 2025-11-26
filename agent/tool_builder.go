@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+
+	"github.com/hlfshell/gogentic/tool"
 )
 
 // ToolBuilder helps build tool definitions with proper JSON schema.
@@ -15,7 +17,7 @@ type ToolBuilder struct {
 	// required is a list of required parameter names.
 	required []string
 	// handler is the function that handles the tool call.
-	handler func(ctx context.Context, args Arguments) ResultInterface
+	handler func(ctx context.Context, args tool.Arguments) tool.ResultInterface
 }
 
 // NewToolBuilder creates a new tool builder.
@@ -105,31 +107,18 @@ func (b *ToolBuilder) AddObjectParameter(name, description string, properties ma
 }
 
 // SetHandler sets the handler function for the tool.
-// The handler receives Arguments and returns a ResultInterface.
-func (b *ToolBuilder) SetHandler(handler func(ctx context.Context, args Arguments) ResultInterface) *ToolBuilder {
+// The handler receives tool.Arguments and returns a tool.ResultInterface.
+func (b *ToolBuilder) SetHandler(handler func(ctx context.Context, args tool.Arguments) tool.ResultInterface) *ToolBuilder {
 	b.handler = handler
 	return b
 }
 
 // Build builds the tool.
-func (b *ToolBuilder) Build() GotonomyTool {
-	// Create the parameters schema
-	schema := map[string]interface{}{
-		"type":       "object",
-		"properties": b.parameters,
-	}
-
-	if len(b.required) > 0 {
-		schema["required"] = b.required
-	}
-
-	// Use Tool function with a wrapper that calls the handler
-	handler := b.handler
-	return Tool[ResultInterface](b.name, b.description, schema, func(ctx context.Context, args Arguments) (ResultInterface, error) {
-		result := handler(ctx, args)
-		if result.Errored() {
-			return result, nil // Return the error result, not an error
-		}
-		return result, nil
-	})
+// TODO: This needs to be updated to use the new tool.NewTool API with []tool.Parameter
+// For now, this is a placeholder that needs to be fully implemented.
+func (b *ToolBuilder) Build() tool.Tool {
+	// TODO: Convert b.parameters (map[string]interface{}) to []tool.Parameter
+	// and use tool.NewTool to create the tool properly
+	// This is a breaking change that requires refactoring the ToolBuilder API
+	panic("ToolBuilder.Build() needs to be updated to use the new tool.Parameter API")
 }

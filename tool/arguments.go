@@ -1,18 +1,19 @@
-package agent
+package tool
 
 import (
 	"encoding/json"
 	"fmt"
 )
 
-// Arguments represents input arguments for tool or agent execution.
-// It's a map where all arguments are key-value pairs.
-// Common keys include "input" for the primary input, but any key can be used.
-type Arguments map[string]interface{}
-
-// NewArguments creates an Arguments map from any value by marshaling it to JSON
-// and then unmarshaling it into a map. This allows you to create Arguments
-// from structs, maps, or any JSON-serializable value.
+// NewArguments creates an Arguments map from any value.
+//
+// Conversion rules:
+// - If v is already Arguments or map[string]any, it is used directly (no JSON round-trip).
+// - Otherwise, v is marshaled via encoding/json and then unmarshaled into a map.
+//   Struct fields follow json tags and exported field names. Ensure tags/names match.
+//
+// This makes the JSON round-trip explicit and allows predictable struct-to-Arguments
+// conversion, while preserving performance when callers already provide maps.
 //
 // Example:
 //
@@ -62,8 +63,11 @@ func NewArguments(v interface{}) (Arguments, error) {
 }
 
 // UnmarshalArgs unmarshals the entire Arguments map into the target struct.
-// This provides type-safe extraction of arguments for tool implementations.
-// The target must be a pointer to a struct with JSON tags.
+//
+// Details:
+// - Uses encoding/json under the hood: the target must be a pointer to a struct
+//   with appropriate json tags or exported field names that match keys.
+// - Passing Arguments or map[string]any into NewArguments avoids any JSON encoding.
 //
 // Example:
 //
@@ -77,7 +81,7 @@ func NewArguments(v interface{}) (Arguments, error) {
 //	if err := arguments.UnmarshalArgs(&args); err != nil {
 //		return nil, err
 //	}
-func (a Arguments) UnmarshalArgs(target interface{}) error {
+func UnmarshalArgs(a Arguments, target interface{}) error {
 	if len(a) == 0 {
 		return nil
 	}
@@ -94,3 +98,5 @@ func (a Arguments) UnmarshalArgs(target interface{}) error {
 
 	return nil
 }
+
+

@@ -6,40 +6,42 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
-	"github.com/google/uuid"
 	agentcontext "github.com/hlfshell/gogentic/context"
 	"github.com/hlfshell/gogentic/model"
 	"github.com/hlfshell/gogentic/tool"
 )
 
 // Agent is a simple expandable type of tool that utilizes an LLM
-// to accomplish a task. They are a basic implementation of the GotonomyTool
+// to accomplish a task. They are a basic implementation of the tool.Tool
 // interface, meaning they can be in turn handed off to other agents.
 type Agent[T any] struct {
 	// name is the name of the agent. When used as a tool, this must be globally unique.
 	name string
 	// description is a human readable description of the agent
 	description string
-	// arguments is the arguments the agent can use.
-	arguments Arguments
+	// parameters is the list of parameters the agent accepts.
+	parameters []tool.Parameter
 	// model is the language model to use. (Required)
 	model *model.Model
 	// tools is the list of tools the agent can use.
-	tools map[string]tool.GotonomyTool
+	tools map[string]tool.Tool
 	// argumentsParser is a function that converts the arguments an agent
 	// receives to map[string]string. If nil, DefaultArgumentsToPrompt is used.
 	argumentsParser ArgumentsToPrompt
 	// parser is the parser to use for structured output (optional)
-	parser ResponseParserInterface
+	parser ResponseParser[T]
 }
 
 // AgentOption is a functional option for configuring an Agent.
 type AgentOption[T any] func(*Agent[T])
 
-// DefaultArgumentsToPrompt just json marshals the arguments to a string
-func DefaultArgumentsToPrompt(args Arguments) (map[string]string, error) {
+// DefaultArgumentsToPrompt marshals the entire arguments map to a single JSON string
+// under the "input" key. This produces nested JSON when later embedded in prompts.
+// If you want per-field templating, provide a custom ArgumentsToPrompt.
+func DefaultArgumentsToPrompt(args tool.Arguments) (map[string]string, error) {
 	data, err := json.Marshal(args)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal arguments: %w", err)
@@ -49,12 +51,14 @@ func DefaultArgumentsToPrompt(args Arguments) (map[string]string, error) {
 	}, nil
 }
 
-// DefaultResponseParser just returns the text output as is
-func DefaultResponseParser(input string) ResultInterface {
-	return Result[string]{
-		Result: input,
-		Error:  nil,
+// DefaultResponseParser returns the text output unchanged for string T.
+// Limitation: Only supports T=string. For non-string types, returns zero-value and a parse error.
+func DefaultResponseParser[T any](input string) (T, []string) {
+	var zero T
+	if _, ok := any(zero).(string); ok {
+		return any(input).(T), nil
 	}
+	return zero, []string{"default parser only supports string type"}
 }
 
 // NewAgent creates a new agent with the given name, description, and model.
@@ -75,14 +79,25 @@ func NewAgent[T any](
 	model *model.Model,
 	opts ...AgentOption[T],
 ) *Agent[T] {
-	// Create agent with sensible defaults
+	// Create agent with sensible defaults - default parameter is "input"
+	defaultParams := []tool.Parameter{
+		tool.NewParameter[string](
+			"input",
+			"The input for the agent",
+			true,
+			"",
+			func(v string) (string, error) { return v, nil },
+		),
+	}
+
 	a := &Agent[T]{
 		name:            name,
 		description:     description,
+		parameters:      defaultParams,
 		model:           model,
-		tools:           make(map[string]GotonomyTool),
+		tools:           make(map[string]tool.Tool),
 		argumentsParser: DefaultArgumentsToPrompt,
-		parser:          DefaultResponseParser,
+		parser:          DefaultResponseParser[T],
 	}
 
 	// Apply all options
@@ -93,12 +108,13 @@ func NewAgent[T any](
 	return a
 }
 
-// WithPrompt sets the system prompt for the agent, utilizing the
-// SimplePromptTemplate function. Will overwrite any existing
-// arguments parser.
+// WithPrompt is currently a no-op placeholder for future prompt templating.
+// It exists to avoid breaking API, but does not alter behavior yet.
+// Future versions will wire this into a prompt template system.
 func WithPrompt[T any](prompt string) AgentOption[T] {
 	return func(a *Agent[T]) {
-		a.argumentsParser = SimplePromptTemplate(prompt, a.arguments)
+		// intentionally no-op
+		_ = prompt
 	}
 }
 
@@ -112,208 +128,219 @@ func WithArgumentsParser[T any](parser ArgumentsToPrompt) AgentOption[T] {
 
 // WithParser sets a custom output parser for the agent.
 // The parser extracts structured data from the agent's text output.
-func WithParser[T any](parser ResponseParserInterface) AgentOption[T] {
+func WithParser[T any](parser ResponseParser[T]) AgentOption[T] {
 	return func(a *Agent[T]) {
 		a.parser = parser
 	}
 }
 
-// WithTool adds a tool to the agent.
-func WithTool[T any](tool GotonomyTool) AgentOption[T] {
+// WithParameters sets the parameters for the agent.
+func WithParameters[T any](parameters []tool.Parameter) AgentOption[T] {
 	return func(a *Agent[T]) {
-		a.tools[tool.Name()] = tool
+		a.parameters = parameters
+	}
+}
+
+// WithTool adds a tool to the agent.
+func WithTool[T any](t tool.Tool) AgentOption[T] {
+	return func(a *Agent[T]) {
+		a.tools[t.Name()] = t
 	}
 }
 
 // WithTools adds multiple tools to the agent.
-func WithTools[T any](tools []GotonomyTool) AgentOption[T] {
+func WithTools[T any](tools []tool.Tool) AgentOption[T] {
 	return func(a *Agent[T]) {
-		for _, tool := range tools {
-			a.tools[tool.Name()] = tool
+		for _, t := range tools {
+			a.tools[t.Name()] = t
 		}
 	}
 }
 
 // Name returns the name of the agent. When used as a tool, this serves as the unique identifier.
+// Implements tool.Tool.
 func (a *Agent[T]) Name() string {
 	return a.name
 }
 
 // Description returns a description of the agent.
+// Implements tool.Tool.
 func (a *Agent[T]) Description() string {
 	return a.description
 }
 
-// Parameters returns the JSON schema for the agent's parameters when used as a tool.
-// By default, agents accept an "input" parameter.
-// This method is part of the GotonomyTool interface.
-func (a *Agent[T]) Parameters() map[string]interface{} {
-	return map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"input": map[string]interface{}{
-				"type":        "string",
-				"description": "The input for the agent",
-			},
-		},
-		"required": []string{"input"},
-	}
+// Parameters returns the list of parameters for the agent.
+// Implements tool.Tool.
+func (a *Agent[T]) Parameters() []tool.Parameter {
+	// Preserve declaration order; return a shallow copy for encapsulation
+	result := make([]tool.Parameter, len(a.parameters))
+	copy(result, a.parameters)
+	return result
 }
 
 // Execute executes the agent with the given arguments and returns a result.
-// This method implements the GotonomyTool interface, allowing agents to be used as tools.
+// This method implements the tool.Tool interface, allowing agents to be used as tools.
 // Errors are returned as part of the ResultInterface, not as a separate error.
-func (a *Agent[T]) Execute(ctx context.Context, args Arguments) ResultInterface {
+func (a *Agent[T]) Execute(ctx context.Context, args tool.Arguments) tool.ResultInterface {
+	// Convert tool.Arguments to map[string]string via argumentsParser
 	parsedArgs, err := a.argumentsParser(args)
 	if err != nil {
-		return BlankResult(nil, err)
+		return tool.NewError(err)
 	}
 
-	// Convert the parsed arguments map to a JSON string for the prompt
-	inputData, err := json.Marshal(parsedArgs)
-	if err != nil {
-		return BlankResult(nil, fmt.Errorf("failed to marshal parsed arguments: %w", err))
+	// Avoid double JSON encoding: expect primary input under "input"
+	input, ok := parsedArgs["input"]
+	if !ok {
+		// Fallback: marshal arguments once if no "input" key present
+		bytes, mErr := json.Marshal(args)
+		if mErr != nil {
+			return tool.NewError(fmt.Errorf("failed to marshal arguments: %w", mErr))
+		}
+		input = string(bytes)
 	}
-	input := string(inputData)
 
 	// Execute the agent with the provided arguments (non-streaming)
 	// Tools don't pass options - use agent defaults
-	result, err := a.executeInternal(ctx, input, nil, nil)
+	result, err := a.executeInternal(ctx, input)
 
 	if err != nil {
-		return BlankResult(nil, err)
+		return tool.NewError(err)
 	}
 
-	// Return the agent result wrapped in a Result
-	return Result[T]{
-		Result: result,
-		Error:  err,
+	// Parse the result using the agent's parser
+	parsed, parseErrors := a.parser(result.Output)
+	if len(parseErrors) > 0 {
+		// If parsing failed, return the raw output as string
+		// This allows the agent to still work even if parsing fails
+		return tool.NewOK(result.Output)
 	}
+
+	// Return the parsed result
+	return tool.NewOK(parsed)
 }
 
-// TODO WORK ON THESE PARTS:
+// buildModelMessages converts a conversation to model messages.
+func (a *Agent[T]) buildModelMessages(conversation *Conversation) []model.Message {
+	model_messages := []model.Message{}
 
-// // buildModelMessages converts a conversation to model messages.
-// func (a *Agent) buildModelMessages(conversation *Conversation) []model.Message {
-// 	model_messages := []model.Message{}
+	// TODO: Add system prompt if configured
+	// if a.systemPrompt != "" {
+	// 	model_messages = append(model_messages, model.Message{
+	// 		Role: "system",
+	// 		Content: []model.Content{
+	// 			{
+	// 				Type: model.TextContent,
+	// 				Text: a.systemPrompt,
+	// 			},
+	// 		},
+	// 	})
+	// }
 
-// 	// Add the system prompt if it exists
-// 	if a.prompt != "" {
-// 		model_messages = append(model_messages, model.Message{
-// 			Role: "system",
-// 			Content: []model.Content{
-// 				{
-// 					Type: model.TextContent,
-// 					Text: a.prompt,
-// 				},
-// 			},
-// 		})
-// 	}
+	// Add the conversation messages
+	for _, msg := range conversation.Messages {
+		model_msg := model.Message{
+			Role: msg.Role,
+			Content: []model.Content{
+				{
+					Type: model.TextContent,
+					Text: msg.Content,
+				},
+			},
+		}
+		model_messages = append(model_messages, model_msg)
+	}
 
-// 	// Add the conversation messages
-// 	for _, msg := range conversation.Messages {
-// 		model_msg := model.Message{
-// 			Role: msg.Role,
-// 			Content: []model.Content{
-// 				{
-// 					Type: model.TextContent,
-// 					Text: msg.Content,
-// 				},
-// 			},
-// 		}
-// 		model_messages = append(model_messages, model_msg)
-// 	}
+	return model_messages
+}
 
-// 	return model_messages
-// }
+// buildCompletionRequest builds a completion request from model messages and options.
+func (a *Agent[T]) buildCompletionRequest(model_messages []model.Message, temperature float32, max_tokens int, stream bool) model.CompletionRequest {
+	request := model.CompletionRequest{
+		Messages:       model_messages,
+		Temperature:    temperature,
+		MaxTokens:      max_tokens,
+		StreamResponse: stream,
+	}
 
-// // buildCompletionRequest builds a completion request from model messages and options.
-// func (a *Agent) buildCompletionRequest(model_messages []model.Message, temperature float32, max_tokens int, stream bool) model.CompletionRequest {
-// 	request := model.CompletionRequest{
-// 		Messages:       model_messages,
-// 		Temperature:    temperature,
-// 		MaxTokens:      max_tokens,
-// 		StreamResponse: stream,
-// 	}
+	// Add tools if they exist, using ParametersToJSONSchema to convert parameters
+	if len(a.tools) > 0 {
+		model_tools := []model.Tool{}
+		// Stabilize tool listing order by name
+		names := make([]string, 0, len(a.tools))
+		for name := range a.tools {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			t := a.tools[name]
+			model_tool := model.Tool{
+				Name:        t.Name(),
+				Description: t.Description(),
+				Parameters:  tool.ParametersToJSONSchema(t.Parameters()),
+			}
+			model_tools = append(model_tools, model_tool)
+		}
+		request.Tools = model_tools
+	}
 
-// 	// Add tools if they exist
-// 	if len(a.tools) > 0 {
-// 		model_tools := []model.Tool{}
-// 		for _, tool := range a.tools {
-// 			model_tool := model.Tool{
-// 				Name:        tool.Name(),
-// 				Description: tool.Description(),
-// 				Parameters:  tool.Parameters(),
-// 			}
-// 			model_tools = append(model_tools, model_tool)
-// 		}
-// 		request.Tools = model_tools
-// 	}
-
-// 	return request
-// }
+	return request
+}
 
 // processToolCalls processes a list of tool calls and returns the results.
 func (a *Agent[T]) processToolCalls(
 	ctx context.Context,
 	tool_calls []model.ToolCall,
-) ([]ResultInterface, error) {
-	tool_results := []ResultInterface{}
+) ([]tool.ResultInterface, error) {
+	tool_results := []tool.ResultInterface{}
 
 	// Get ExecutionContext if available
 	execCtx, hasExecCtx := agentcontext.AsExecutionContext(ctx)
 
 	for _, tool_call := range tool_calls {
 		// Create tool call node if ExecutionContext is available
-		var toolNode *agentcontext.Node
 		if hasExecCtx {
-			var err error
-			toolNode, err = execCtx.CreateChildNode(nil, "tool", tool_call.Name, tool_call.Arguments)
+			toolNode, err := execCtx.CreateChildNode(nil, "tool", tool_call.Name, tool_call.Arguments)
 			if err == nil {
 				_ = toolNode
 			}
 		}
 
 		// Find the tool
-		if tool, exists := a.tools[tool_call.Name]; !exists {
-			tool_result := NewToolResultError(tool_call.Name, fmt.Errorf("tool not found: %s", tool_call.Name))
+		t, exists := a.tools[tool_call.Name]
+		if !exists {
+			tool_result := tool.NewError(fmt.Errorf("tool not found: %s", tool_call.Name))
 			tool_results = append(tool_results, tool_result)
 			if hasExecCtx {
 				execCtx.SetError(fmt.Errorf("tool not found: %s", tool_call.Name))
 			}
 			continue
-		} else {
-			tool_result := tool.Execute(ctx, toolArgs)
-			tool_results = append(tool_results, tool_result)
-			if hasExecCtx {
-				agentcontext.SetOutput(execCtx, tool_result.String())
-				agentcontext.SetData(execCtx, "tool_result", tool_result.GetResult())
-			}
 		}
 
-		// Convert tool call arguments to Arguments
-		// Just use the map directly - no need to separate input
-		toolArgs := Arguments(tool_call.Arguments)
+		// Convert tool call arguments to tool.Arguments
+		toolArgs := tool.Arguments(tool_call.Arguments)
 
-		// Execute the tool directly - Tool interface has Execute() method
-		tool_result := tool.Execute(ctx, toolArgs)
+		// Execute the tool
+		tool_result := t.Execute(ctx, toolArgs)
 
 		// Check if the tool result contains an error
 		if tool_result.Errored() {
 			tool_results = append(tool_results, tool_result)
 			if hasExecCtx {
-				execCtx.SetError(fmt.Errorf(tool_result.GetError()))
+				execCtx.SetError(tool_result.GetError())
 			}
 			continue
 		}
 
 		// Tool call succeeded - set output in execution context
 		if hasExecCtx {
-			agentcontext.SetOutput(execCtx, tool_result.String())
+			str, serr := tool_result.String()
+			if serr != nil {
+				execCtx.SetError(serr)
+			}
+			agentcontext.SetOutput(execCtx, str)
 			agentcontext.SetData(execCtx, "tool_result", tool_result.GetResult())
 		}
 
-		// Tool call succeeded
 		tool_results = append(tool_results, tool_result)
 	}
 
@@ -321,11 +348,17 @@ func (a *Agent[T]) processToolCalls(
 }
 
 // addToolResultsToConversation adds tool results as messages to the conversation.
-func (a *Agent) addToolResultsToConversation(conversation *Conversation, tool_results []ResultInterface) {
+func (a *Agent[T]) addToolResultsToConversation(conversation *Conversation, tool_results []tool.ResultInterface) {
 	for _, tool_result := range tool_results {
+		// Use the string view of the result for conversation
+		content, err := tool_result.String()
+		if err != nil {
+			// Surface stringification errors in the conversation
+			content = err.Error()
+		}
 		tool_message := Message{
 			Role:      "tool",
-			Content:   tool_result.String(),
+			Content:   content,
 			Timestamp: time.Now(),
 		}
 		conversation.Messages = append(conversation.Messages, tool_message)
@@ -333,237 +366,26 @@ func (a *Agent) addToolResultsToConversation(conversation *Conversation, tool_re
 	conversation.UpdatedAt = time.Now()
 }
 
-// executeInternal is the internal implementation used by both ExecuteAgent and ExecuteStream.
-func (a *Agent) executeInternal(
+// agentExecutionResult holds the result of an agent execution.
+type agentExecutionResult struct {
+	Output string
+}
+
+// executeInternal is the internal implementation used by Execute.
+// TODO: This function is incomplete and needs to be fully implemented.
+// It currently references many missing fields and methods that need to be added to Agent[T].
+func (a *Agent[T]) executeInternal(
 	ctx context.Context,
 	input string,
-) (AgentResult, error) {
-	// Get or create ExecutionContext
-	execCtx := agentcontext.InitContext(ctx)
-	ctx = execCtx // Use ExecutionContext as the context going forward
+) (agentExecutionResult, error) {
+	// TODO: This function needs to be fully implemented with:
+	// - ExecutionContext setup
+	// - Conversation management
+	// - Model message building (using buildModelMessages)
+	// - Completion request building (using buildCompletionRequest with ParametersToJSONSchema)
+	// - Tool call processing loop
+	// - Response parsing
 
-	// Create agent execution node and set as current
-	agentNode, err := execCtx.CreateChildNode(nil, "agent", a.name, map[string]interface{}{
-		"input":      input,
-		"agent_id":   a.id,
-		"agent_type": "base",
-	})
-	if err != nil {
-		return AgentResult{}, fmt.Errorf("failed to create agent node: %w", err)
-	}
-	if err := execCtx.SetCurrentNode(agentNode); err != nil {
-		return AgentResult{}, fmt.Errorf("failed to set current node: %w", err)
-	}
-	_ = agentNode
-
-	// Set execution-level data
-	agentcontext.SetExecutionData(execCtx, "agent_id", a.id)
-	agentcontext.SetExecutionData(execCtx, "agent_name", a.name)
-	agentcontext.SetExecutionData(execCtx, "agent_type", "base")
-
-	// Record execution start time
-	start_time := time.Now()
-
-	// Apply options if provided
-	temperature := a.temperature
-	if options != nil && options.Temperature != nil {
-		temperature = *options.Temperature
-	}
-
-	max_tokens := a.maxTokens
-	if options != nil && options.MaxTokens != nil {
-		max_tokens = *options.MaxTokens
-	}
-
-	timeout := a.timeout
-	if options != nil && options.Timeout != nil {
-		timeout = *options.Timeout
-	}
-
-	// Create a timeout context
-	timeout_ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Initialize conversation (always create new for now - conversation management can be added later)
-	conversation := &Conversation{
-		ID:        uuid.New().String(),
-		Messages:  []Message{},
-		Metadata:  map[string]interface{}{},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	// Create a user message
-	user_message := Message{
-		Role:      "user",
-		Content:   input,
-		Timestamp: time.Now(),
-	}
-
-	// Add the message to the conversation
-	conversation.Messages = append(conversation.Messages, user_message)
-	conversation.UpdatedAt = time.Now()
-
-	// Initialize usage stats
-	usage_stats := model.UsageStats{}
-
-	// Start the tool loop
-	iterations := 0
-	tool_calls_count := 0
-	for iterations < a.maxIterations {
-		// Create iteration node
-		iterationNode, nodeErr := execCtx.CreateChildNode(nil, "iteration", fmt.Sprintf("iteration_%d", iterations+1), map[string]interface{}{
-			"iteration_number": iterations + 1,
-		})
-		if nodeErr == nil {
-			_ = iterationNode
-		}
-
-		// Check if the context is done
-		select {
-		case <-timeout_ctx.Done():
-			execCtx.SetError(fmt.Errorf("agent execution timed out: %w", timeout_ctx.Err()))
-			return AgentResult{}, fmt.Errorf("agent execution timed out: %w", timeout_ctx.Err())
-		default:
-			// Continue processing
-		}
-
-		// Convert the conversation to model messages and build the request
-		model_messages := a.buildModelMessages(conversation)
-
-		// Check if streaming is requested and supported
-		use_streaming := streamHandler != nil
-		request := a.buildCompletionRequest(model_messages, temperature, max_tokens, use_streaming)
-
-		// Create the agent message
-		agent_message := Message{
-			Role:      "assistant",
-			Content:   "",
-			Timestamp: time.Now(),
-		}
-
-		var response model.CompletionResponse
-		var err error
-
-		if use_streaming {
-			// Stream the completion from the model
-			var tool_calls []model.ToolCall
-			err = a.model.CompleteStream(timeout_ctx, request, func(chunk model.StreamedCompletionChunk) error {
-				// Update the agent message
-				agent_message.Content += chunk.Text
-
-				// Add tool calls if they exist
-				if len(chunk.ToolCalls) > 0 {
-					tool_calls = chunk.ToolCalls
-					agent_message.ToolCalls = tool_calls
-				}
-
-				// Call the stream handler if provided
-				if streamHandler != nil {
-					return streamHandler(agent_message)
-				}
-				return nil
-			})
-			if err != nil {
-				return AgentResult{}, err
-			}
-
-			// Create a response object from the streamed data
-			response = model.CompletionResponse{
-				Text:       agent_message.Content,
-				ToolCalls:  agent_message.ToolCalls,
-				UsageStats: model.UsageStats{}, // Streaming doesn't provide usage stats incrementally
-			}
-		} else {
-			// Get a completion from the model (non-streaming)
-			response, err = a.model.Complete(timeout_ctx, request)
-			if err != nil {
-				return AgentResult{}, err
-			}
-
-			// Update agent message with response
-			agent_message.Content = response.Text
-			agent_message.ToolCalls = response.ToolCalls
-		}
-
-		// Update usage stats
-		usage_stats.PromptTokens += response.UsageStats.PromptTokens
-		usage_stats.CompletionTokens += response.UsageStats.CompletionTokens
-		usage_stats.TotalTokens += response.UsageStats.TotalTokens
-
-		// Add the agent message to the conversation
-		conversation.Messages = append(conversation.Messages, agent_message)
-		conversation.UpdatedAt = time.Now()
-
-		// Check if there are tool calls
-		if len(agent_message.ToolCalls) == 0 {
-			// No tool calls, we're done
-			// Record execution end time
-			end_time := time.Now()
-
-			// Set output in execution context
-			agentcontext.SetOutput(execCtx, agent_message.Content)
-			agentcontext.SetData(execCtx, "iterations", iterations+1)
-			agentcontext.SetData(execCtx, "tool_calls_count", tool_calls_count)
-			agentcontext.SetData(execCtx, "usage_stats", usage_stats)
-
-			// Parse the response text using the agent's parser if one is configured
-			var parsed_output map[string]interface{}
-			var parse_errors []string
-			if a.parser != nil {
-				parsed_output, parse_errors = a.parser.Parse(agent_message.Content)
-			}
-
-			return AgentResult{
-				Output:            agent_message.Content,
-				AdditionalOutputs: map[string]interface{}{},
-				Conversation:      conversation,
-				UsageStats:        usage_stats,
-				ExecutionStats: ExecutionStats{
-					StartTime:  start_time,
-					EndTime:    end_time,
-					ToolCalls:  tool_calls_count,
-					Iterations: iterations + 1,
-				},
-				Message:      agent_message,
-				ParsedOutput: parsed_output,
-				ParseErrors:  parse_errors,
-			}, nil
-		}
-
-		// Process tool calls
-		tool_calls_count += len(agent_message.ToolCalls)
-		agentcontext.SetData(execCtx, "current_iteration_tool_calls", len(agent_message.ToolCalls))
-		tool_results, err := a.processToolCalls(timeout_ctx, agent_message.ToolCalls)
-		if err != nil {
-			execCtx.SetError(err)
-			return AgentResult{}, err
-		}
-
-		// Add the tool results to the agent message
-		agent_message.ToolResults = tool_results
-
-		// Add tool results to the conversation
-		a.addToolResultsToConversation(conversation, tool_results)
-
-		// Call stream handler for tool results if streaming
-		if streamHandler != nil {
-			for _, tool_result := range tool_results {
-				tool_message := Message{
-					Role:      "tool",
-					Content:   tool_result.String(),
-					Timestamp: time.Now(),
-				}
-				if err := streamHandler(tool_message); err != nil {
-					return AgentResult{}, err
-				}
-			}
-		}
-
-		// Increment the iteration counter
-		iterations++
-	}
-
-	// We've reached the maximum number of iterations
-	return AgentResult{}, fmt.Errorf("reached maximum number of iterations without completing the task")
+	// For now, return an error indicating this needs implementation
+	return agentExecutionResult{}, fmt.Errorf("executeInternal is not yet fully implemented - needs agent configuration fields and helper methods")
 }

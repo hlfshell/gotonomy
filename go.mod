@@ -1,4 +1,4 @@
-module github.com/hlfshell/gogentic
+module github.com/hlfshell/gotonomy
 
 go 1.24.2
 
@@ -9,5 +9,3 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4
 	gopkg.in/yaml.v3 v3.0.1
 )
-
-replace github.com/hlfshell/structured-parse/go/structuredparse => /tmp/structured-parse/go

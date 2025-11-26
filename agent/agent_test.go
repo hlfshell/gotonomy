@@ -113,15 +113,11 @@ func TestToolResultMarshalJSON(t *testing.T) {
 }
 
 func TestToolResultUnmarshalJSON(t *testing.T) {
-	jsonStr := `{"tool_name":"test_tool","result":"test value","error":""}`
-	var result Result[string]
+	jsonStr := `"test value"`
+	var result tool.Result[string]
 
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
 		t.Fatalf("UnmarshalJSON failed: %v", err)
-	}
-
-	if result.ToolName != "test_tool" {
-		t.Errorf("Expected tool name 'test_tool', got %q", result.ToolName)
 	}
 
 	if result.Result != "test value" {

@@ -1,160 +1,161 @@
-// Package model provides interfaces and types for interacting with various
-// language and vision-language models across different providers.
+// Package model provides interfaces and types for interacting with language models.
 package model
 
 import (
 	"context"
-	"io"
+	"fmt"
+
+	"github.com/hlfshell/gotonomy/tool"
 )
 
-// ContentType represents the type of content that can be provided to a model.
-type ContentType string
+// Role represents the role of a message sender; different providers
+// can expect different roles.
+type Role string
 
 const (
-	// TextContent represents plain text content.
-	TextContent ContentType = "text"
-	// ImageContent represents image content.
-	ImageContent ContentType = "image"
-	// AudioContent represents audio content.
-	AudioContent ContentType = "audio"
-	// VideoContent represents video content.
-	VideoContent ContentType = "video"
+	RoleSystem    Role = "system"
+	RoleUser      Role = "user"
+	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
 )
 
-// Capability represents a capability that a model may have.
-type Capability string
-
-const (
-	// TextGeneration indicates the model can generate text responses.
-	TextGeneration Capability = "text_generation"
-	// ImageUnderstanding indicates the model can process and understand images.
-	ImageUnderstanding Capability = "image_understanding"
-	// AudioUnderstanding indicates the model can process and understand audio.
-	AudioUnderstanding Capability = "audio_understanding"
-	// VideoUnderstanding indicates the model can process and understand video.
-	VideoUnderstanding Capability = "video_understanding"
-	// ToolUsage indicates the model can use tools/functions.
-	ToolUsage Capability = "tool_usage"
-	// Embedding indicates the model can generate embeddings.
-	Embedding Capability = "embedding"
-)
-
-// Content represents a piece of content to be sent to a model.
-type Content struct {
-	// Type is the type of content.
-	Type ContentType
-	// Text is the text content if Type is TextContent.
-	Text string
-	// Data is the raw data for non-text content types.
-	Data io.Reader
-	// MIMEType is the MIME type of the content (for non-text content).
-	MIMEType string
-	// Name is an optional name for the content (e.g., filename).
-	Name string
+// ModelDescription contains metadata about a model.
+type ModelDescription struct {
+	Model            string        `json:"model"` // Needs to be the canonical provider ID of the model
+	Provider         string        `json:"provider"`
+	MaxContextTokens int           `json:"max_context_tokens"`
+	Description      string        `json:"description"`
+	Costs            CostsPerToken `json:"costs"`
+	// CanUseTools indicates whether the model can use tools/functions
+	// If not, you need to use a ReAct wrapper to add it to the model.
+	CanUseTools bool `json:"can_use_tools"`
 }
 
-// ModelInfo contains metadata about a model.
-type ModelInfo struct {
-	// Name is the name of the model.
-	Name string
-	// Provider is the provider of the model (e.g., "openai", "google", "anthropic").
-	Provider string
-	// Capabilities is a list of capabilities the model has.
-	Capabilities []Capability
-	// MaxContextTokens is the maximum number of tokens the model can process.
-	MaxContextTokens int
-	// Description is a human-readable description of the model.
-	Description string
+// Validate validates the model description.
+func (m ModelDescription) Validate() error {
+	if m.Model == "" {
+		return fmt.Errorf("%w: model name is required", ErrInvalidModelDescription)
+	}
+	if m.Provider == "" {
+		return fmt.Errorf("%w: provider is required", ErrInvalidModelDescription)
+	}
+	if m.MaxContextTokens <= 0 {
+		return fmt.Errorf("%w: MaxContextTokens must be greater than 0", ErrInvalidModelDescription)
+	}
+	return nil
+}
+
+// CostsPerToken contains the costs per token for a model.
+type CostsPerToken struct {
+	Input     float64 `json:"input"`
+	Output    float64 `json:"output"`
+	Reasoning float64 `json:"reasoning"` // Only some providers consider reasoning tokens separately
+}
+
+// Cost calculates the total cost for the given token counts.
+func (c CostsPerToken) Cost(input, output, reasoning int) float64 {
+	return c.Input*float64(input) + c.Output*float64(output) + c.Reasoning*float64(reasoning)
 }
 
 // Message represents a message in a conversation with a model.
 type Message struct {
-	// Role is the role of the message sender (e.g., "system", "user", "assistant").
-	Role string
-	// Content is the list of content pieces in the message.
-	Content []Content
+	Role    Role   `json:"role"`
+	Content string `json:"content"`
 }
 
-// CompletionRequest represents a request for a model completion.
-type CompletionRequest struct {
-	// Messages is the conversation history.
-	Messages []Message
+// Validate validates the message.
+func (m Message) Validate() error {
+	if m.Role == "" {
+		return fmt.Errorf("%w: role is required", ErrInvalidMessage)
+	}
+	switch m.Role {
+	case RoleSystem, RoleUser, RoleAssistant, RoleTool:
+		// Valid role
+	default:
+		return fmt.Errorf("%w: invalid role %q", ErrInvalidMessage, m.Role)
+	}
+	return nil
+}
+
+// ModelConfig contains configuration for model completion requests.
+type ModelConfig struct {
 	// Temperature controls randomness in the response (0.0 to 1.0).
-	Temperature float32
-	// MaxTokens is the maximum number of tokens to generate.
-	MaxTokens int
-	// Tools is an optional list of tools the model can use.
-	Tools []Tool
-	// StreamResponse indicates whether the response should be streamed.
-	StreamResponse bool
+	// Higher values make output more random, lower values more deterministic.
+	Temperature float32 `json:"temperature"`
 }
 
-// Tool represents a tool that a model can use.
-type Tool struct {
-	// Name is the name of the tool.
-	Name string
-	// Description is a description of what the tool does.
-	Description string
-	// Parameters is a map of parameter names to their JSON schema.
-	Parameters map[string]interface{}
+// Validate validates the model configuration.
+func (c ModelConfig) Validate() error {
+	if c.Temperature < 0.0 || c.Temperature > 1.0 {
+		return fmt.Errorf("%w: temperature must be between 0.0 and 1.0, got %f", ErrInvalidConfig, c.Temperature)
+	}
+	return nil
 }
 
-// ToolCall represents a call to a tool by the model.
+// CompletionRequest represents a request for a model completion
+type CompletionRequest struct {
+	Messages []Message   `json:"messages"`
+	Tools    []tool.Tool `json:"tools"`
+	Config   ModelConfig `json:"config"`
+}
+
+// Validate validates the completion request.
+func (r CompletionRequest) Validate() error {
+	if len(r.Messages) == 0 {
+		return fmt.Errorf("%w: at least one message is required", ErrInvalidRequest)
+	}
+	for i, msg := range r.Messages {
+		if err := msg.Validate(); err != nil {
+			return fmt.Errorf("message %d: %w", i, err)
+		}
+	}
+	if err := r.Config.Validate(); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	return nil
+}
+
+// ToolCall represents the instance of calling a tool via the model
 type ToolCall struct {
-	// Name is the name of the tool being called.
-	Name string
-	// Arguments is a map of argument names to their values.
-	Arguments map[string]interface{}
+	Name      string         `json:"name"`
+	Arguments tool.Arguments `json:"arguments"`
 }
 
-// CompletionResponse represents a response from a model completion request.
+// CompletionResponse represents a response from a model completion request
 type CompletionResponse struct {
-	// Text is the generated text response.
-	Text string
-	// ToolCalls is a list of tool calls the model wants to make.
-	ToolCalls []ToolCall
-	// FinishReason indicates why the model stopped generating text.
-	FinishReason string
-	// UsageStats contains token usage statistics.
-	UsageStats UsageStats
+	Text       string     `json:"text"`
+	ToolCalls  []ToolCall `json:"tool_calls"`
+	UsageStats UsageStats `json:"usage_stats"`
 }
 
 // UsageStats contains token usage statistics for a model request.
 type UsageStats struct {
-	// PromptTokens is the number of tokens in the prompt.
-	PromptTokens int
-	// CompletionTokens is the number of tokens in the completion.
-	CompletionTokens int
-	// TotalTokens is the total number of tokens used.
-	TotalTokens int
+	InputTokens     int `json:"input_tokens"`
+	OutputTokens    int `json:"output_tokens"`
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
-// StreamedCompletionChunk represents a chunk of a streamed completion response.
-type StreamedCompletionChunk struct {
-	// Text is the text in this chunk.
-	Text string
-	// ToolCalls is a list of tool calls in this chunk.
-	ToolCalls []ToolCall
-	// FinishReason indicates why the model stopped generating text.
-	FinishReason string
-	// IsFinal indicates whether this is the final chunk.
-	IsFinal bool
+// Total returns the total number of tokens used.
+func (u UsageStats) Total() int {
+	return u.InputTokens + u.OutputTokens + u.ReasoningTokens
 }
 
-// StreamHandler is a function that handles streamed completion chunks.
-type StreamHandler func(chunk StreamedCompletionChunk) error
+// Add returns a new UsageStats with the sum of this and the other UsageStats.
+func (u UsageStats) Add(other UsageStats) UsageStats {
+	return UsageStats{
+		InputTokens:     u.InputTokens + other.InputTokens,
+		OutputTokens:    u.OutputTokens + other.OutputTokens,
+		ReasoningTokens: u.ReasoningTokens + other.ReasoningTokens,
+	}
+}
 
-// Model represents a language or vision-language model.
+// Model is anindividual interface to a specific model from a provider;
+// each provider will implement this interface for their given subset
+// of models.
 type Model interface {
-	// GetInfo returns information about the model.
-	GetInfo() ModelInfo
+	// Description returns information about the model.
+	Description() ModelDescription
 
 	// Complete generates a completion for the given request.
 	Complete(ctx context.Context, request CompletionRequest) (CompletionResponse, error)
-
-	// CompleteStream generates a streamed completion for the given request.
-	CompleteStream(ctx context.Context, request CompletionRequest, handler StreamHandler) error
-
-	// SupportsContentType checks if the model supports a specific content type.
-	SupportsContentType(contentType ContentType) bool
 }

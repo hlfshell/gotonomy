@@ -42,9 +42,10 @@ func (m *MockModel) CompleteStream(ctx context.Context, req model.CompletionRequ
 
 func (m *MockModel) GetInfo() model.ModelInfo {
 	return model.ModelInfo{
-		Name:         "mock-model",
-		Provider:     "mock",
-		Capabilities: []model.Capability{model.TextGeneration},
+		Name:            "mock-model",
+		Provider:        "mock",
+		SupportsText:    true,
+		CanGenerateText: true,
 	}
 }
 
