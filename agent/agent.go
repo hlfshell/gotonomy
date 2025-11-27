@@ -28,9 +28,10 @@ type Agent[T any] struct {
 	model *model.Model
 	// tools is the list of tools the agent can use.
 	tools map[string]tool.Tool
-	// argumentsParser is a function that converts the arguments an agent
-	// receives to map[string]string. If nil, DefaultArgumentsToPrompt is used.
-	argumentsParser ArgumentsToPrompt
+	// preparePrompt is a function that converts the arguments an agent
+	// receives a prompt the agent uses. If nil, DefaultArgumentsToPrompt
+	// is used.
+	preparePrompt PrepareInput
 	// parser is the parser to use for structured output (optional)
 	parser ResponseParser[T]
 }
@@ -91,13 +92,13 @@ func NewAgent[T any](
 	}
 
 	a := &Agent[T]{
-		name:            name,
-		description:     description,
-		parameters:      defaultParams,
-		model:           model,
-		tools:           make(map[string]tool.Tool),
-		argumentsParser: DefaultArgumentsToPrompt,
-		parser:          DefaultResponseParser[T],
+		name:          name,
+		description:   description,
+		parameters:    defaultParams,
+		model:         model,
+		tools:         make(map[string]tool.Tool),
+		preparePrompt: DefaultArgumentsToPrompt,
+		parser:        DefaultResponseParser[T],
 	}
 
 	// Apply all options
@@ -120,9 +121,9 @@ func WithPrompt[T any](prompt string) AgentOption[T] {
 
 // WithArgumentsParser sets a custom arguments parser for the agent.
 // The parser converts tool arguments into a map[string]string for prompting.
-func WithArgumentsParser[T any](parser ArgumentsToPrompt) AgentOption[T] {
+func WithArgumentsParser[T any](parser PrepareInput) AgentOption[T] {
 	return func(a *Agent[T]) {
-		a.argumentsParser = parser
+		a.preparePrompt = parser
 	}
 }
 
@@ -158,19 +159,16 @@ func WithTools[T any](tools []tool.Tool) AgentOption[T] {
 }
 
 // Name returns the name of the agent. When used as a tool, this serves as the unique identifier.
-// Implements tool.Tool.
 func (a *Agent[T]) Name() string {
 	return a.name
 }
 
 // Description returns a description of the agent.
-// Implements tool.Tool.
 func (a *Agent[T]) Description() string {
 	return a.description
 }
 
 // Parameters returns the list of parameters for the agent.
-// Implements tool.Tool.
 func (a *Agent[T]) Parameters() []tool.Parameter {
 	// Preserve declaration order; return a shallow copy for encapsulation
 	result := make([]tool.Parameter, len(a.parameters))
@@ -182,26 +180,27 @@ func (a *Agent[T]) Parameters() []tool.Parameter {
 // This method implements the tool.Tool interface, allowing agents to be used as tools.
 // Errors are returned as part of the ResultInterface, not as a separate error.
 func (a *Agent[T]) Execute(ctx context.Context, args tool.Arguments) tool.ResultInterface {
+
+	ectx, hasExecCtx := agentcontext.AsExecutionContext(ctx)
+	if !hasExecCtx {
+		return tool.NewError(fmt.Errorf("execution context not found"))
+	}
+
 	// Convert tool.Arguments to map[string]string via argumentsParser
-	parsedArgs, err := a.argumentsParser(args)
+	model_input, err := a.preparePrompt(ectx, args)
 	if err != nil {
 		return tool.NewError(err)
 	}
 
-	// Avoid double JSON encoding: expect primary input under "input"
-	input, ok := parsedArgs["input"]
-	if !ok {
-		// Fallback: marshal arguments once if no "input" key present
-		bytes, mErr := json.Marshal(args)
-		if mErr != nil {
-			return tool.NewError(fmt.Errorf("failed to marshal arguments: %w", mErr))
-		}
-		input = string(bytes)
-	}
-
-	// Execute the agent with the provided arguments (non-streaming)
-	// Tools don't pass options - use agent defaults
-	result, err := a.executeInternal(ctx, input)
+	// Call the model
+	response, err := a.model.Complete(
+		ctx,
+		model.CompletionRequest{
+			Messages: model_input,
+			Tools:    a.tools,
+			Config:   model.ModelConfig{},
+		},
+	)
 
 	if err != nil {
 		return tool.NewError(err)
@@ -220,7 +219,7 @@ func (a *Agent[T]) Execute(ctx context.Context, args tool.Arguments) tool.Result
 }
 
 // buildModelMessages converts a conversation to model messages.
-func (a *Agent[T]) buildModelMessages(conversation *Conversation) []model.Message {
+func (a *Agent[T]) buildModelMessages(conversation *History) []model.Message {
 	model_messages := []model.Message{}
 
 	// TODO: Add system prompt if configured
@@ -348,7 +347,7 @@ func (a *Agent[T]) processToolCalls(
 }
 
 // addToolResultsToConversation adds tool results as messages to the conversation.
-func (a *Agent[T]) addToolResultsToConversation(conversation *Conversation, tool_results []tool.ResultInterface) {
+func (a *Agent[T]) addToolResultsToConversation(conversation *History, tool_results []tool.ResultInterface) {
 	for _, tool_result := range tool_results {
 		// Use the string view of the result for conversation
 		content, err := tool_result.String()

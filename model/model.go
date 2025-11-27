@@ -149,7 +149,7 @@ func (u UsageStats) Add(other UsageStats) UsageStats {
 	}
 }
 
-// Model is anindividual interface to a specific model from a provider;
+// Model is an individual interface to a specific model from a provider;
 // each provider will implement this interface for their given subset
 // of models.
 type Model interface {

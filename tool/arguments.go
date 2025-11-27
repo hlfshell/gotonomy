@@ -8,9 +8,9 @@ import (
 // NewArguments creates an Arguments map from any value.
 //
 // Conversion rules:
-// - If v is already Arguments or map[string]any, it is used directly (no JSON round-trip).
-// - Otherwise, v is marshaled via encoding/json and then unmarshaled into a map.
-//   Struct fields follow json tags and exported field names. Ensure tags/names match.
+//   - If v is already Arguments or map[string]any, it is used directly (no JSON round-trip).
+//   - Otherwise, v is marshaled via encoding/json and then unmarshaled into a map.
+//     Struct fields follow json tags and exported field names. Ensure tags/names match.
 //
 // This makes the JSON round-trip explicit and allows predictable struct-to-Arguments
 // conversion, while preserving performance when callers already provide maps.
@@ -29,11 +29,11 @@ import (
 //
 // Or from a map:
 //
-//	args := NewArguments(map[string]interface{}{
+//	args := NewArguments(map[string]any{
 //		"input": "Hello",
 //		"key":   "value",
 //	})
-func NewArguments(v interface{}) (Arguments, error) {
+func NewArguments(v any) (Arguments, error) {
 	if v == nil {
 		return Arguments{}, nil
 	}
@@ -43,8 +43,8 @@ func NewArguments(v interface{}) (Arguments, error) {
 		return args, nil
 	}
 
-	// If it's already a map[string]interface{}, convert it
-	if m, ok := v.(map[string]interface{}); ok {
+	// If it's already a map[string]any, convert it
+	if m, ok := v.(map[string]any); ok {
 		return Arguments(m), nil
 	}
 
@@ -65,9 +65,9 @@ func NewArguments(v interface{}) (Arguments, error) {
 // UnmarshalArgs unmarshals the entire Arguments map into the target struct.
 //
 // Details:
-// - Uses encoding/json under the hood: the target must be a pointer to a struct
-//   with appropriate json tags or exported field names that match keys.
-// - Passing Arguments or map[string]any into NewArguments avoids any JSON encoding.
+//   - Uses encoding/json under the hood: the target must be a pointer to a struct
+//     with appropriate json tags or exported field names that match keys.
+//   - Passing Arguments or map[string]any into NewArguments avoids any JSON encoding.
 //
 // Example:
 //
@@ -81,7 +81,7 @@ func NewArguments(v interface{}) (Arguments, error) {
 //	if err := arguments.UnmarshalArgs(&args); err != nil {
 //		return nil, err
 //	}
-func UnmarshalArgs(a Arguments, target interface{}) error {
+func UnmarshalArgs(a Arguments, target any) error {
 	if len(a) == 0 {
 		return nil
 	}
@@ -98,5 +98,3 @@ func UnmarshalArgs(a Arguments, target interface{}) error {
 
 	return nil
 }
-
-
