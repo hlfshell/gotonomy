@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	agentcontext "github.com/hlfshell/gogentic/context"
+	"github.com/hlfshell/gogentic/context"
 	"github.com/hlfshell/gogentic/model"
 	"github.com/hlfshell/gogentic/tool"
 )
@@ -17,7 +17,7 @@ import (
 // Agent is a simple expandable type of tool that utilizes an LLM
 // to accomplish a task. They are a basic implementation of the tool.Tool
 // interface, meaning they can be in turn handed off to other agents.
-type Agent[T any] struct {
+type Agent[I any, O any] struct {
 	// name is the name of the agent. When used as a tool, this must be globally unique.
 	name string
 	// description is a human readable description of the agent
@@ -28,16 +28,16 @@ type Agent[T any] struct {
 	model *model.Model
 	// tools is the list of tools the agent can use.
 	tools map[string]tool.Tool
-	// preparePrompt is a function that converts the arguments an agent
+	// prepareInput is a function that converts the arguments an agent
 	// receives a prompt the agent uses. If nil, DefaultArgumentsToPrompt
 	// is used.
-	preparePrompt PrepareInput
+	prepareInput PrepareInput
 	// parser is the parser to use for structured output (optional)
-	parser ResponseParser[T]
+	parser ParseResponse[O]
 }
 
 // AgentOption is a functional option for configuring an Agent.
-type AgentOption[T any] func(*Agent[T])
+type AgentOption[I any, O any] func(*Agent[I, O])
 
 // DefaultArgumentsToPrompt marshals the entire arguments map to a single JSON string
 // under the "input" key. This produces nested JSON when later embedded in prompts.
@@ -54,10 +54,10 @@ func DefaultArgumentsToPrompt(args tool.Arguments) (map[string]string, error) {
 
 // DefaultResponseParser returns the text output unchanged for string T.
 // Limitation: Only supports T=string. For non-string types, returns zero-value and a parse error.
-func DefaultResponseParser[T any](input string) (T, []string) {
-	var zero T
+func DefaultResponseParser[I any, O any](input string) (O, []string) {
+	var zero O
 	if _, ok := any(zero).(string); ok {
-		return any(input).(T), nil
+		return any(input).(O), nil
 	}
 	return zero, []string{"default parser only supports string type"}
 }
@@ -75,11 +75,11 @@ func DefaultResponseParser[T any](input string) (T, []string) {
 //	    agent.WithTools(tool1, tool2),
 //	    agent.WithTemperature(0.3),
 //	)
-func NewAgent[T any](
+func NewAgent[I any, O any](
 	name, description string,
 	model *model.Model,
-	opts ...AgentOption[T],
-) *Agent[T] {
+	opts ...AgentOption[I, O],
+) *Agent[I, O] {
 	// Create agent with sensible defaults - default parameter is "input"
 	defaultParams := []tool.Parameter{
 		tool.NewParameter[string](
@@ -91,14 +91,14 @@ func NewAgent[T any](
 		),
 	}
 
-	a := &Agent[T]{
-		name:          name,
-		description:   description,
-		parameters:    defaultParams,
-		model:         model,
-		tools:         make(map[string]tool.Tool),
-		preparePrompt: DefaultArgumentsToPrompt,
-		parser:        DefaultResponseParser[T],
+	a := &Agent[I, O]{
+		name:         name,
+		description:  description,
+		parameters:   defaultParams,
+		model:        model,
+		tools:        make(map[string]tool.Tool),
+		prepareInput: DefaultArgumentsToPrompt,
+		parser:       DefaultResponseParser[I, O],
 	}
 
 	// Apply all options
@@ -112,8 +112,8 @@ func NewAgent[T any](
 // WithPrompt is currently a no-op placeholder for future prompt templating.
 // It exists to avoid breaking API, but does not alter behavior yet.
 // Future versions will wire this into a prompt template system.
-func WithPrompt[T any](prompt string) AgentOption[T] {
-	return func(a *Agent[T]) {
+func WithPrompt[I any, O any](prompt string) AgentOption[I, O] {
+	return func(a *Agent[I, O]) {
 		// intentionally no-op
 		_ = prompt
 	}
@@ -121,37 +121,37 @@ func WithPrompt[T any](prompt string) AgentOption[T] {
 
 // WithArgumentsParser sets a custom arguments parser for the agent.
 // The parser converts tool arguments into a map[string]string for prompting.
-func WithArgumentsParser[T any](parser PrepareInput) AgentOption[T] {
-	return func(a *Agent[T]) {
-		a.preparePrompt = parser
+func WithArgumentsParser[I any, O any](parser PrepareInput) AgentOption[I, O] {
+	return func(a *Agent[I, O]) {
+		a.prepareInput = parser
 	}
 }
 
 // WithParser sets a custom output parser for the agent.
 // The parser extracts structured data from the agent's text output.
-func WithParser[T any](parser ResponseParser[T]) AgentOption[T] {
-	return func(a *Agent[T]) {
+func WithParser[I any, O any](parser ResponseParser[O]) AgentOption[I, O] {
+	return func(a *Agent[I, O]) {
 		a.parser = parser
 	}
 }
 
 // WithParameters sets the parameters for the agent.
-func WithParameters[T any](parameters []tool.Parameter) AgentOption[T] {
-	return func(a *Agent[T]) {
+func WithParameters[I any, O any](parameters []tool.Parameter) AgentOption[I, O] {
+	return func(a *Agent[I, O]) {
 		a.parameters = parameters
 	}
 }
 
 // WithTool adds a tool to the agent.
-func WithTool[T any](t tool.Tool) AgentOption[T] {
-	return func(a *Agent[T]) {
+func WithTool[I any, O any](t tool.Tool) AgentOption[I, O] {
+	return func(a *Agent[I, O]) {
 		a.tools[t.Name()] = t
 	}
 }
 
 // WithTools adds multiple tools to the agent.
-func WithTools[T any](tools []tool.Tool) AgentOption[T] {
-	return func(a *Agent[T]) {
+func WithTools[I any, O any](tools []tool.Tool) AgentOption[I, O] {
+	return func(a *Agent[I, O]) {
 		for _, t := range tools {
 			a.tools[t.Name()] = t
 		}
@@ -159,27 +159,38 @@ func WithTools[T any](tools []tool.Tool) AgentOption[T] {
 }
 
 // Name returns the name of the agent. When used as a tool, this serves as the unique identifier.
-func (a *Agent[T]) Name() string {
+func (a *Agent[I, O]) Name() string {
 	return a.name
 }
 
 // Description returns a description of the agent.
-func (a *Agent[T]) Description() string {
+func (a *Agent[I, O]) Description() string {
 	return a.description
 }
 
 // Parameters returns the list of parameters for the agent.
-func (a *Agent[T]) Parameters() []tool.Parameter {
+func (a *Agent[I, O]) Parameters() []tool.Parameter {
 	// Preserve declaration order; return a shallow copy for encapsulation
 	result := make([]tool.Parameter, len(a.parameters))
 	copy(result, a.parameters)
 	return result
 }
 
+// Run accepts a given input, prepares it to a model.Call, gets a response,
+// handles tool calls, then attempts to parse what it means until the agent
+// declares itself done, all teh while tracing context.
+func (a *Agent[I, O]) Run(ctx context.Context, input I) (O, error) {
+	session := NewSession()
+
+	for !session.Finished() {
+
+	}
+}
+
 // Execute executes the agent with the given arguments and returns a result.
 // This method implements the tool.Tool interface, allowing agents to be used as tools.
 // Errors are returned as part of the ResultInterface, not as a separate error.
-func (a *Agent[T]) Execute(ctx context.Context, args tool.Arguments) tool.ResultInterface {
+func (a *Agent[I, O]) Execute(ctx context.Context, args tool.Arguments) tool.ResultInterface {
 
 	ectx, hasExecCtx := agentcontext.AsExecutionContext(ctx)
 	if !hasExecCtx {
@@ -187,7 +198,7 @@ func (a *Agent[T]) Execute(ctx context.Context, args tool.Arguments) tool.Result
 	}
 
 	// Convert tool.Arguments to map[string]string via argumentsParser
-	model_input, err := a.preparePrompt(ectx, args)
+	model_input, err := a.prepareInput(ectx, args)
 	if err != nil {
 		return tool.NewError(err)
 	}
@@ -219,7 +230,7 @@ func (a *Agent[T]) Execute(ctx context.Context, args tool.Arguments) tool.Result
 }
 
 // buildModelMessages converts a conversation to model messages.
-func (a *Agent[T]) buildModelMessages(conversation *History) []model.Message {
+func (a *Agent[I, O]) buildModelMessages(conversation *History) []model.Message {
 	model_messages := []model.Message{}
 
 	// TODO: Add system prompt if configured
@@ -253,7 +264,7 @@ func (a *Agent[T]) buildModelMessages(conversation *History) []model.Message {
 }
 
 // buildCompletionRequest builds a completion request from model messages and options.
-func (a *Agent[T]) buildCompletionRequest(model_messages []model.Message, temperature float32, max_tokens int, stream bool) model.CompletionRequest {
+func (a *Agent[I, O]) buildCompletionRequest(model_messages []model.Message, temperature float32, max_tokens int, stream bool) model.CompletionRequest {
 	request := model.CompletionRequest{
 		Messages:       model_messages,
 		Temperature:    temperature,
@@ -286,7 +297,7 @@ func (a *Agent[T]) buildCompletionRequest(model_messages []model.Message, temper
 }
 
 // processToolCalls processes a list of tool calls and returns the results.
-func (a *Agent[T]) processToolCalls(
+func (a *Agent[I, O]) processToolCalls(
 	ctx context.Context,
 	tool_calls []model.ToolCall,
 ) ([]tool.ResultInterface, error) {
@@ -347,7 +358,7 @@ func (a *Agent[T]) processToolCalls(
 }
 
 // addToolResultsToConversation adds tool results as messages to the conversation.
-func (a *Agent[T]) addToolResultsToConversation(conversation *History, tool_results []tool.ResultInterface) {
+func (a *Agent[I, O]) addToolResultsToConversation(conversation *History, tool_results []tool.ResultInterface) {
 	for _, tool_result := range tool_results {
 		// Use the string view of the result for conversation
 		content, err := tool_result.String()
@@ -368,23 +379,4 @@ func (a *Agent[T]) addToolResultsToConversation(conversation *History, tool_resu
 // agentExecutionResult holds the result of an agent execution.
 type agentExecutionResult struct {
 	Output string
-}
-
-// executeInternal is the internal implementation used by Execute.
-// TODO: This function is incomplete and needs to be fully implemented.
-// It currently references many missing fields and methods that need to be added to Agent[T].
-func (a *Agent[T]) executeInternal(
-	ctx context.Context,
-	input string,
-) (agentExecutionResult, error) {
-	// TODO: This function needs to be fully implemented with:
-	// - ExecutionContext setup
-	// - Conversation management
-	// - Model message building (using buildModelMessages)
-	// - Completion request building (using buildCompletionRequest with ParametersToJSONSchema)
-	// - Tool call processing loop
-	// - Response parsing
-
-	// For now, return an error indicating this needs implementation
-	return agentExecutionResult{}, fmt.Errorf("executeInternal is not yet fully implemented - needs agent configuration fields and helper methods")
 }
