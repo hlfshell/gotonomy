@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/hlfshell/gogentic/model"
+	"github.com/hlfshell/gotonomy/model"
 )
 
 type Step struct {
@@ -39,6 +39,12 @@ func (s *Step) SetResponse(response Response) {
 	s.stats.ReceivedAt = time.Now()
 }
 
+// AppendToolMessage appends a tool message to the step's input so that tool
+// outputs can be replayed on subsequent LLM calls.
+func (s *Step) AppendToolMessage(msg model.Message) {
+	s.input = append(s.input, msg)
+}
+
 func (s *Step) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
 		Input    []model.Message `json:"input"`
@@ -69,8 +75,10 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 }
 
 type Response struct {
+	// If Error is populated, Output may be blank.
 	Output    model.Message    `json:"output"`
 	ToolCalls []model.ToolCall `json:"tool_calls"`
+	Error     string           `json:"error,omitempty"`
 }
 
 type StepStats struct {
@@ -83,17 +91,58 @@ func (ss *StepStats) Duration() time.Duration {
 }
 
 type Session struct {
-	steps []Step
+	steps []*Step
 }
 
 func NewSession() *Session {
 	return &Session{
-		steps: []Step{},
+		steps: []*Step{},
 	}
 }
 
-func (s *Session) AddStep(step Step) {
+func (s *Session) AddStep(step *Step) {
 	s.steps = append(s.steps, step)
+}
+
+// Steps returns a copy of the steps slice for read-only access.
+func (s *Session) Steps() []*Step {
+	if len(s.steps) == 0 {
+		return nil
+	}
+	out := make([]*Step, len(s.steps))
+	copy(out, s.steps)
+	return out
+}
+
+// LastStep returns the most recent step in the session, or nil if none exist.
+func (s *Session) LastStep() *Step {
+	if len(s.steps) == 0 {
+		return nil
+	}
+	return s.steps[len(s.steps)-1]
+}
+
+// AppendToolMessage appends a tool message to the most recent step, if any.
+func (s *Session) AppendToolMessage(msg model.Message) {
+	last := s.LastStep()
+	if last == nil {
+		return
+	}
+	last.AppendToolMessage(msg)
+}
+
+// Conversation flattens the session into a sequence of model messages in the
+// order they were sent/received.
+func (s *Session) Conversation() []model.Message {
+	var msgs []model.Message
+	for _, step := range s.steps {
+		if len(step.input) > 0 {
+			msgs = append(msgs, step.input...)
+		}
+		// Always include the assistant output; for error steps this may be blank.
+		msgs = append(msgs, step.response.Output)
+	}
+	return msgs
 }
 
 func (s *Session) Duration() time.Duration {
@@ -119,9 +168,9 @@ func (s *Session) Finished() bool {
 
 func (s *Session) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&struct {
-		Steps    []Step `json:"steps"`
-		Finished bool   `json:"finished"`
-		Duration string `json:"duration"`
+		Steps    []*Step `json:"steps"`
+		Finished bool    `json:"finished"`
+		Duration string  `json:"duration"`
 	}{
 		Steps:    s.steps,
 		Finished: s.Finished(),
@@ -131,7 +180,7 @@ func (s *Session) MarshalJSON() ([]byte, error) {
 
 func (s *Session) UnmarshalJSON(data []byte) error {
 	var aux struct {
-		Steps []Step `json:"steps"`
+		Steps []*Step `json:"steps"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err

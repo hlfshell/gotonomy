@@ -1,25 +1,26 @@
 package agent
 
-import "github.com/hlfshell/gogentic/parser"
+import "github.com/hlfshell/gotonomy/parser"
 
-// parserAdapter adapts a parser.Parser to the ParserInterface.
-type parserAdapter struct {
-	parser parser.Parser[map[string]interface{}]
-}
+// NewParserAdapter adapts a parser.Parser[map[string]interface{}] to the
+// agent.ResponseParser function type. It converts structured-parse errors
+// into a slice of warning strings while preserving the successfully parsed
+// result whenever possible.
+func NewParserAdapter(p parser.Parser[map[string]interface{}]) ResponseParser {
+	return func(input string) (any, []string) {
+		var result map[string]interface{}
 
-// Parse implements ParserInterface.
-func (p *parserAdapter) Parse(input string) (map[string]interface{}, []string) {
-	result, err := p.parser.Parse(input)
-	if err != nil {
+		parsed, err := p.Parse(input)
+		if err == nil {
+			return parsed, nil
+		}
+
+		// Best-effort: preserve whatever the underlying parser produced.
+		result = parsed
+
 		if parseErr, ok := err.(*parser.ParseErrors); ok {
 			return result, parseErr.AllErrors()
 		}
 		return result, []string{err.Error()}
 	}
-	return result, nil
-}
-
-// NewParserAdapter creates a ParserInterface from a parser.Parser[map[string]interface{}].
-func NewParserAdapter(p parser.Parser[map[string]interface{}]) ResponseParserInterface {
-	return &parserAdapter{parser: p}
 }

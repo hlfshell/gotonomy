@@ -3,6 +3,7 @@ package scoped_ledger
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/hlfshell/gotonomy/data/ledger"
 )
@@ -58,6 +59,21 @@ func (sl *ScopedLedger) GetKeys() []string {
 		return []string{}
 	}
 	return keys
+}
+
+// Subscoped creates a new ScopedLedger that is nested under the current scope.
+// For example, if the current scope is "foo" and subScope is "bar",
+// the resulting scope will be "foo:bar".
+func (sl *ScopedLedger) Subscoped(subScope string) *ScopedLedger {
+	// Avoid double separators if caller passed a value that already
+	// contains the current scope prefix, ie was passed foo:bar instead
+	// of just bar for our foo scope.
+	if strings.HasPrefix(subScope, sl.scope+":") {
+		return NewScopedLedger(sl.ledger, subScope)
+	}
+
+	scope := sl.scope + ":" + subScope
+	return NewScopedLedger(sl.ledger, scope)
 }
 
 func (sl *ScopedLedger) MarshalJSON() ([]byte, error) {
