@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hlfshell/gotonomy/data/history"
 	"github.com/hlfshell/gotonomy/data/ledger"
 	scopedledger "github.com/hlfshell/gotonomy/data/ledger/scoped_ledger"
 )
@@ -15,183 +14,47 @@ import (
 // w/ a built in ledger data store for communicating data
 // across tools during execution
 type Execution struct {
-	root NodeID
+	root ContextID
 
-	nodes map[NodeID]*Context
+	ctxs map[ContextID]*Context
 
 	// Execution-level data ledger (shared across all children)
 	data       *ledger.Ledger
 	globalData *scopedledger.ScopedLedger
 
-	startedAt time.Time
-	endedAt   time.Time
-
 	// Mutex for thread safety
 	mu sync.RWMutex
 }
 
-// isBlank returns true if the execution is nil or has no root and no nodes.
-// A blank execution is one that hasn't actually started yet.
-func (e *Execution) isBlank() bool {
-	if e == nil {
-		return true
+// NewExecution creates a fresh execution and a fully initialized root context.
+func NewExecution(tool Tool, args Arguments) (*Execution, *Context) {
+	data := ledger.NewLedger()
+
+	e := &Execution{
+		root:       "",
+		ctxs:       make(map[ContextID]*Context),
+		data:       data,
+		globalData: scopedledger.NewScopedLedger(data, "global"),
+		mu:         sync.RWMutex{},
 	}
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.root == "" && len(e.nodes) == 0
+
+	root := blankContext(e)
+	fillBlankContext(root, tool, args) // sets id, toolName, contextData, root id, etc.
+	return e, root
 }
 
-// newExecutionWithRoot creates:
-// - the shared ledger
-// - global scoped ledger
-// - a fully wired root node for tool t + args
-// If e is nil or blank, it will be allocated/initialized. If e is already initialized,
-// it will be reused and the root node will be added to it.
-func newExecutionWithRoot(
-	e *Execution, // may be nil or blank
-	t Tool,
-	args Arguments,
-) (*Execution, *Context, error) {
-	// Allocate execution if nil
-	if e == nil {
-		e = &Execution{}
-	}
-
-	// Initialize core fields if needed
-	if e.data == nil {
-		e.data = ledger.NewLedger()
-		e.globalData = scopedledger.NewScopedLedger(e.data, "global")
-		e.nodes = make(map[NodeID]*Context)
-		e.stats = Stats{}
-	}
-
-	// Create the root node
-	hist := history.NewHistory()
-	rootID := NodeID(uuid.New().String())
-	rootScope := fmt.Sprintf("%s:%s", t.Name(), rootID)
-
-	root := &Context{
-		id:         rootID,
-		toolName:   t.Name(),
-		parent:     "",
-		children:   []NodeID{},
-		input:      args,
-		output:     nil,
-		data:       e.data,
-		globalData: e.globalData,
-		nodeData:   scopedledger.NewScopedLedger(e.data, rootScope),
-		scopedData: map[string]*scopedledger.ScopedLedger{},
-		history:    hist,
-		stats: Stats{
-			startTime: time.Now(),
-			endTime:   time.Time{},
-		},
-	}
-
-	// Assign root into execution
-	e.root = rootID
-	e.nodes[rootID] = root
-
-	return e, root, nil
-}
-
-// createChildInternal creates a child node under a given parent.
-// This is the unified source of truth for child node creation.
-func (e *Execution) createChildInternal(
-	parentID NodeID,
-	t Tool,
-	args Arguments,
-) (*Context, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	parent, ok := e.nodes[parentID]
-	if !ok {
-		return nil, fmt.Errorf("parent node %s not found", parentID)
-	}
-
-	id := NodeID(uuid.New().String())
-	scope := fmt.Sprintf("%s:%s", t.Name(), id)
-
-	child := &Context{
-		id:         id,
-		toolName:   t.Name(),
-		parent:     parentID,
-		children:   []NodeID{},
-		input:      args,
-		output:     nil,
-		data:       e.data,
-		globalData: e.globalData,
-		nodeData:   scopedledger.NewScopedLedger(e.data, scope),
-		scopedData: map[string]*scopedledger.ScopedLedger{},
-		history:    parent.history,
-		stats: Stats{
-			startTime: time.Now(),
-			endTime:   time.Time{},
-		},
-	}
-
-	parent.children = append(parent.children, id)
-	e.nodes[id] = child
-
-	return child, nil
-}
-
-// PrepareExecution is the single entrypoint for preparing an execution.
-// It handles:
-// - e == nil or blank: creates a new execution + fully wired root node
-// - e != nil and not blank: creates a child node under the given parent
-//
-// For the first tool call, callers can either:
-//   - pass nil as the *Execution, or
-//   - pass a blank &Execution{} if they want to keep a reference early
-//
-// For subsequent calls:
-//   - reuse the returned exec
-//   - set parent to "" to default to the root, or
-//   - set parent to a specific NodeID to attach under that node
-//
-// Returns both the execution and the node representing this tool call.
-// Always returns the execution (even on error) so the caller can keep their reference.
-func PrepareExecution(
-	e *Execution,
-	parent NodeID,
-	t Tool,
-	args Arguments,
-) (*Execution, *Context, error) {
-	// Treat nil or blank as a first call
-	if e == nil || e.isBlank() {
-		if parent != "" {
-			return e, nil, fmt.Errorf("cannot specify parent for first tool call")
-		}
-		return newExecutionWithRoot(e, t, args)
-	}
-
-	// For a non-blank execution, allow parent == "" to default to root
-	if parent == "" {
-		parent = e.root
-	}
-
-	child, err := e.createChildInternal(parent, t, args)
-	if err != nil {
-		return e, nil, err
-	}
-
-	return e, child, nil
-}
-
-func (e *Execution) Tree() map[NodeID][]NodeID {
+func (e *Execution) Tree() map[ContextID][]ContextID {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	// Initialize with all node IDs as keys to ensure complete adjacency map
-	children := make(map[NodeID][]NodeID, len(e.nodes))
-	for id := range e.nodes {
-		children[id] = []NodeID{}
+	children := make(map[ContextID][]ContextID, len(e.ctxs))
+	for id := range e.ctxs {
+		children[id] = []ContextID{}
 	}
 
 	// Fill in child lists
-	for _, n := range e.nodes {
+	for _, n := range e.ctxs {
 		if n.parent != "" {
 			children[n.parent] = append(children[n.parent], n.id)
 		}
@@ -207,12 +70,35 @@ func (e *Execution) GlobalData() *scopedledger.ScopedLedger {
 	return e.globalData
 }
 
-func (e *Execution) Stats() *Stats {
-	return &e.stats
+func (e *Execution) StartAt() time.Time {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.root == "" {
+		return time.Time{}
+	}
+	return e.ctxs[e.root].Stats().StartTime()
+}
+
+func (e *Execution) EndAt() time.Time {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.root == "" {
+		return time.Time{}
+	}
+	return e.ctxs[e.root].Stats().EndTime()
+}
+
+func (e *Execution) Duration() time.Duration {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	if e.root == "" {
+		return 0
+	}
+	return e.ctxs[e.root].Stats().ExecutionDuration()
 }
 
 // RootID returns the ID of the root node
-func (e *Execution) RootID() NodeID {
+func (e *Execution) RootID() ContextID {
 	return e.root
 }
 
@@ -220,5 +106,58 @@ func (e *Execution) RootID() NodeID {
 func (e *Execution) Root() *Context {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
-	return e.nodes[e.root]
+	return e.ctxs[e.root]
+}
+
+// Context returns the context with the given ID, or nil if not found
+func (e *Execution) Context(id ContextID) *Context {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.ctxs[id]
+}
+
+// RootContext returns the root context, or nil if not found
+// This is an alias for Root() for better ergonomics
+func (e *Execution) RootContext() *Context {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.ctxs[e.root]
+}
+
+func (e *Execution) createChild(parentID ContextID, tool Tool, args Arguments) *Context {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	parent, ok := e.ctxs[parentID]
+	if !ok {
+		// Return nil if parent not found - caller should handle error
+		return nil
+	}
+
+	id := ContextID(uuid.New().String())
+	scope := fmt.Sprintf("%s:%s", tool.Name(), id)
+
+	child := &Context{
+		id:          id,
+		toolName:    tool.Name(),
+		parent:      parentID,
+		children:    []ContextID{},
+		data:        e.data,
+		globalData:  e.globalData,
+		contextData: scopedledger.NewScopedLedger(e.data, scope),
+		scopedData:  make(map[string]*scopedledger.ScopedLedger),
+		execution:   e,
+		stats:       Stats{},
+		input:       args,
+		output:      nil,
+		mu:          sync.RWMutex{},
+	}
+
+	e.ctxs[id] = child
+
+	// Update the children list of the parent
+	// Note: We hold Execution.mu, so we can safely mutate parent.children
+	parent.children = append(parent.children, id)
+
+	return child
 }

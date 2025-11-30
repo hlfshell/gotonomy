@@ -19,9 +19,21 @@ type Stats struct {
 	mu sync.RWMutex
 }
 
-func (s *Stats) MarkStarted() {
+func (s *Stats) StartTime() time.Time {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.startTime
+}
+
+func (s *Stats) EndTime() time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.endTime
+}
+
+func (s *Stats) MarkStarted() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.startTime = time.Now()
 }
 

@@ -3,6 +3,9 @@ package tool
 import (
 	"testing"
 	"time"
+
+	"github.com/hlfshell/gotonomy/data/ledger"
+	scopedledger "github.com/hlfshell/gotonomy/data/ledger/scoped_ledger"
 )
 
 // mockTool is a simple tool implementation for testing
@@ -24,7 +27,7 @@ func (m *mockTool) Parameters() []Parameter {
 	return m.params
 }
 
-func (m *mockTool) Execute(e *Execution, args Arguments) ResultInterface {
+func (m *mockTool) Execute(ctx *Context, args Arguments) ResultInterface {
 	return NewOK("mock result")
 }
 
@@ -36,14 +39,11 @@ func newMockTool(name string) Tool {
 	}
 }
 
-func TestPrepareExecution_NewExecution(t *testing.T) {
+func TestNewExecution(t *testing.T) {
 	tool := newMockTool("test-tool")
 	args := Arguments{"key": "value"}
 
-	e, node, err := PrepareExecution(nil, "", tool, args)
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, node := NewExecution(tool, args)
 
 	if e == nil {
 		t.Fatal("Execution should not be nil")
@@ -78,13 +78,10 @@ func TestPrepareExecution_NewExecution(t *testing.T) {
 		t.Fatal("Node globalData should not be nil")
 	}
 
-	if node.nodeData == nil {
-		t.Fatal("Node nodeData should not be nil")
+	if node.contextData == nil {
+		t.Fatal("Node contextData should not be nil")
 	}
 
-	if node.history == nil {
-		t.Fatal("Node history should not be nil")
-	}
 
 	// Stats should be initialized (check that we can access it)
 	stats := node.Stats()
@@ -93,21 +90,14 @@ func TestPrepareExecution_NewExecution(t *testing.T) {
 	}
 }
 
-func TestPrepareExecution_ChildNode(t *testing.T) {
+func TestExecution_CreateChild(t *testing.T) {
 	// Create root execution
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	// Create child
 	childTool := newMockTool("child-tool")
-	child, err := e.createChildInternal(root.ID(), childTool, Arguments{"child": "data"})
-	if err != nil {
-		t.Fatalf("createChildInternal failed: %v", err)
-	}
-
+	child := e.createChild(root.ID(), childTool, Arguments{"child": "data"})
 	if child == nil {
 		t.Fatal("Child should not be nil")
 	}
@@ -141,29 +131,16 @@ func TestPrepareExecution_ChildNode(t *testing.T) {
 		t.Fatal("Child should share same globalData as parent")
 	}
 
-	if child.history != root.history {
-		t.Fatal("Child should share same history as parent")
-	}
 }
 
-func TestPrepareExecution_WithParent(t *testing.T) {
+func TestPrepareContext_WithParent(t *testing.T) {
 	// Create root execution
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	_, root := NewExecution(rootTool, Arguments{})
 
-	// Create child using PrepareExecution
+	// Create child using PrepareContext
 	childTool := newMockTool("child-tool")
-	e2, child, err := PrepareExecution(e, root.ID(), childTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
-
-	if e2 != e {
-		t.Fatal("PrepareExecution should return the same execution")
-	}
+	child := PrepareContext(root, childTool, Arguments{})
 
 	if child == nil {
 		t.Fatal("Child should not be nil")
@@ -172,95 +149,79 @@ func TestPrepareExecution_WithParent(t *testing.T) {
 	if child.parent != root.ID() {
 		t.Errorf("Expected parent %s, got %s", root.ID(), child.parent)
 	}
+
+	if child.execution != root.execution {
+		t.Fatal("Child should share same execution as parent")
+	}
 }
 
-func TestPrepareExecution_ErrorCases(t *testing.T) {
-	// Test: cannot specify parent for first call
+func TestPrepareContext_ErrorCases(t *testing.T) {
+	// Test: nil context creates new execution
 	rootTool := newMockTool("root-tool")
-	invalidParent := NodeID("some-parent")
-	_, node, err := PrepareExecution(nil, invalidParent, rootTool, Arguments{})
-	if err == nil {
-		t.Fatal("PrepareExecution should fail when parent is specified for first call")
+	root := PrepareContext(nil, rootTool, Arguments{})
+	if root == nil {
+		t.Fatal("PrepareContext should create root when context is nil")
 	}
 
-	if node != nil {
-		t.Fatal("Node should be nil on error")
-	}
-
-	// Test: invalid parent ID for existing execution
-	e, _, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
-
+	// Test: invalid parent ID for existing execution (createChild returns nil)
 	childTool := newMockTool("child-tool")
-	invalidParent2 := NodeID("nonexistent")
-	e2, node2, err := PrepareExecution(e, invalidParent2, childTool, Arguments{})
-	if err == nil {
-		t.Fatal("PrepareExecution should fail with invalid parent ID")
+	invalidParent := &Context{
+		id:       ContextID("nonexistent"),
+		execution: root.execution,
 	}
-
-	if e2 != e {
-		t.Fatal("Should return existing execution even on error")
-	}
-
-	if node2 != nil {
-		t.Fatal("Node should be nil on error")
+	child := PrepareContext(invalidParent, childTool, Arguments{})
+	// Should fall back to creating new execution
+	if child == nil {
+		t.Fatal("PrepareContext should create new execution when parent not found")
 	}
 }
 
-func TestPrepareExecution_BlankExecution(t *testing.T) {
-	// Test: blank execution (empty struct)
-	blankExec := &Execution{}
+func TestPrepareContext_BlankContext(t *testing.T) {
+	// Test: blank context gets filled
+	data := ledger.NewLedger()
+	blankExec := &Execution{
+		data:       data,
+		globalData: scopedledger.NewScopedLedger(data, "global"),
+		ctxs:       make(map[ContextID]*Context),
+	}
+	blankCtx := blankContext(blankExec)
 	rootTool := newMockTool("root-tool")
-	e, node, err := PrepareExecution(blankExec, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
+	
+	ctx := PrepareContext(blankCtx, rootTool, Arguments{})
+	if ctx == nil {
+		t.Fatal("Context should not be nil")
 	}
 
-	if e != blankExec {
-		t.Fatal("Should return the same execution instance")
+	if ctx.ID() == "" {
+		t.Fatal("Context should have an ID after PrepareContext")
 	}
 
-	if node == nil {
-		t.Fatal("Node should not be nil")
-	}
-
-	if e.RootID() != node.ID() {
-		t.Errorf("Root ID should match node ID")
+	if blankExec.RootID() != ctx.ID() {
+		t.Errorf("Root ID should match context ID")
 	}
 }
 
-func TestPrepareExecution_ParentDefaultsToRoot(t *testing.T) {
+func TestPrepareContext_ChildFromParent(t *testing.T) {
 	// Create root execution
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	_, root := NewExecution(rootTool, Arguments{})
 
-	// Create child with empty parent (should default to root)
+	// Create child using PrepareContext with parent
 	childTool := newMockTool("child-tool")
-	e2, child, err := PrepareExecution(e, "", childTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
-
-	if e2 != e {
-		t.Fatal("Should return the same execution")
-	}
+	child := PrepareContext(root, childTool, Arguments{})
 
 	if child.parent != root.ID() {
 		t.Errorf("Expected parent %s (root), got %s", root.ID(), child.parent)
+	}
+
+	if child.execution != root.execution {
+		t.Fatal("Child should share same execution as parent")
 	}
 }
 
 func TestExecution_Tree(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	// Initially, tree should have only root
 	tree := e.Tree()
@@ -274,15 +235,15 @@ func TestExecution_Tree(t *testing.T) {
 
 	// Add children
 	child1Tool := newMockTool("child1")
-	child1, err := e.createChildInternal(root.ID(), child1Tool, Arguments{})
-	if err != nil {
-		t.Fatalf("createChildInternal failed: %v", err)
+	child1 := e.createChild(root.ID(), child1Tool, Arguments{})
+	if child1 == nil {
+		t.Fatalf("createChild failed")
 	}
 
 	child2Tool := newMockTool("child2")
-	child2, err := e.createChildInternal(root.ID(), child2Tool, Arguments{})
-	if err != nil {
-		t.Fatalf("createChildInternal failed: %v", err)
+	child2 := e.createChild(root.ID(), child2Tool, Arguments{})
+	if child2 == nil {
+		t.Fatalf("createChild failed")
 	}
 
 	// Verify tree structure
@@ -320,10 +281,7 @@ func TestExecution_Tree(t *testing.T) {
 
 func TestExecution_Data(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, _, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, _ := NewExecution(rootTool, Arguments{})
 
 	data := e.Data()
 	if data == nil {
@@ -336,26 +294,24 @@ func TestExecution_Data(t *testing.T) {
 	}
 }
 
-func TestExecution_Stats(t *testing.T) {
+func TestExecution_RootStats(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, _, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	_, root := NewExecution(rootTool, Arguments{})
 
-	stats := e.Stats()
+	stats := root.Stats()
 	if stats == nil {
 		t.Fatal("Stats should not be nil")
 	}
 
-	// Stats should have startTime set
-	if stats.startTime.IsZero() {
+	// Stats should have startTime set after MarkStarted
+	stats.MarkStarted()
+	if stats.StartTime().IsZero() {
 		t.Fatal("Stats startTime should be set")
 	}
 
 	// Mark finished
 	stats.MarkFinished()
-	if stats.endTime.IsZero() {
+	if stats.EndTime().IsZero() {
 		t.Fatal("Stats endTime should be set after MarkFinished")
 	}
 
@@ -374,10 +330,7 @@ func TestExecution_Stats(t *testing.T) {
 
 func TestExecution_RootID(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	rootID := e.RootID()
 	if rootID != root.ID() {
@@ -387,10 +340,7 @@ func TestExecution_RootID(t *testing.T) {
 
 func TestExecution_Root(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	retrievedRoot := e.Root()
 	if retrievedRoot == nil {
@@ -404,10 +354,7 @@ func TestExecution_Root(t *testing.T) {
 
 func TestExecution_ConcurrentAccess(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	// Concurrent writes
 	done := make(chan bool, 10)
@@ -415,9 +362,9 @@ func TestExecution_ConcurrentAccess(t *testing.T) {
 		go func(id int) {
 			defer func() { done <- true }()
 			childTool := newMockTool("child")
-			_, err := e.createChildInternal(root.ID(), childTool, Arguments{"id": id})
-			if err != nil {
-				t.Errorf("createChildInternal failed: %v", err)
+			child := e.createChild(root.ID(), childTool, Arguments{"id": id})
+			if child == nil {
+				t.Errorf("createChild failed")
 			}
 		}(i)
 	}
@@ -453,28 +400,25 @@ func TestExecution_ConcurrentAccess(t *testing.T) {
 
 func TestExecution_DeepTree(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	// Create a deep tree: root -> child1 -> grandchild1 -> greatgrandchild1
 	child1Tool := newMockTool("child1")
-	child1, err := e.createChildInternal(root.ID(), child1Tool, Arguments{})
-	if err != nil {
-		t.Fatalf("createChildInternal failed: %v", err)
+	child1 := e.createChild(root.ID(), child1Tool, Arguments{})
+	if child1 == nil {
+		t.Fatalf("createChild failed")
 	}
 
 	grandchild1Tool := newMockTool("grandchild1")
-	grandchild1, err := e.createChildInternal(child1.ID(), grandchild1Tool, Arguments{})
-	if err != nil {
-		t.Fatalf("createChildInternal failed: %v", err)
+	grandchild1 := e.createChild(child1.ID(), grandchild1Tool, Arguments{})
+	if grandchild1 == nil {
+		t.Fatalf("createChild failed")
 	}
 
 	greatgrandchild1Tool := newMockTool("greatgrandchild1")
-	greatgrandchild1, err := e.createChildInternal(grandchild1.ID(), greatgrandchild1Tool, Arguments{})
-	if err != nil {
-		t.Fatalf("createChildInternal failed: %v", err)
+	greatgrandchild1 := e.createChild(grandchild1.ID(), greatgrandchild1Tool, Arguments{})
+	if greatgrandchild1 == nil {
+		t.Fatalf("createChild failed")
 	}
 
 	// Verify tree structure
@@ -502,18 +446,15 @@ func TestExecution_DeepTree(t *testing.T) {
 
 func TestExecution_MultipleChildren(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, root, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	e, root := NewExecution(rootTool, Arguments{})
 
 	// Create multiple children under root
 	children := make([]*Context, 5)
 	for i := 0; i < 5; i++ {
 		childTool := newMockTool("child")
-		child, err := e.createChildInternal(root.ID(), childTool, Arguments{"index": i})
-		if err != nil {
-			t.Fatalf("createChildInternal failed: %v", err)
+		child := e.createChild(root.ID(), childTool, Arguments{"index": i})
+		if child == nil {
+			t.Fatalf("createChild failed")
 		}
 		children[i] = child
 	}
@@ -534,19 +475,17 @@ func TestExecution_MultipleChildren(t *testing.T) {
 
 func TestExecution_StatsTiming(t *testing.T) {
 	rootTool := newMockTool("root-tool")
-	e, _, err := PrepareExecution(nil, "", rootTool, Arguments{})
-	if err != nil {
-		t.Fatalf("PrepareExecution failed: %v", err)
-	}
+	_, root := NewExecution(rootTool, Arguments{})
 
-	stats := e.Stats()
-	startTime := stats.startTime
+	stats := root.Stats()
+	stats.MarkStarted()
+	startTime := stats.StartTime()
 
 	// Wait a bit
 	time.Sleep(10 * time.Millisecond)
 
 	stats.MarkFinished()
-	endTime := stats.endTime
+	endTime := stats.EndTime()
 
 	if !endTime.After(startTime) {
 		t.Fatal("EndTime should be after startTime")

@@ -1,7 +1,6 @@
 package tool
 
 import (
-	"context"
 	"errors"
 	"testing"
 )
@@ -15,7 +14,7 @@ func TestNewTool(t *testing.T) {
 		"test_tool",
 		"Test tool description",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "result", nil
 		},
 	)
@@ -43,18 +42,17 @@ func TestTool_Execute_Success(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			name := args["name"].(string)
 			return "Hello, " + name, nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"name": "World",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if result.Errored() {
 		t.Errorf("Execute() errored unexpectedly: %v", result.GetError())
@@ -77,7 +75,7 @@ func TestTool_Execute_WithDefaults(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			// Capture the args to verify default was applied
 			capturedArgs = make(Arguments)
 			for k, v := range args {
@@ -87,13 +85,12 @@ func TestTool_Execute_WithDefaults(t *testing.T) {
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"name": "test",
 		// count is not provided, should use default
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if result.Errored() {
 		t.Errorf("Execute() errored unexpectedly: %v", result.GetError())
@@ -128,15 +125,14 @@ func TestTool_Execute_MissingRequired(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "result", nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	// For pointer types with nil default, the default check (param.Default() != nil) 
 	// evaluates to false, so default is not applied, and required check should catch it
@@ -167,16 +163,15 @@ func TestTool_Execute_MissingRequiredWithDefault(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			name := args["name"].(string)
 			return "Hello, " + name, nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	// Should not error - default should be applied
 	if result.Errored() {
@@ -199,17 +194,16 @@ func TestTool_Execute_TypeMismatch(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "result", nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"name": 42, // wrong type
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if !result.Errored() {
 		t.Errorf("Execute() should have errored for type mismatch")
@@ -227,17 +221,16 @@ func TestTool_Execute_HandlerError(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "", handlerError
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"name": "test",
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if !result.Errored() {
 		t.Errorf("Execute() should have errored")
@@ -258,12 +251,11 @@ func TestTool_Execute_DoesNotMutateInput(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "result", nil
 		},
 	)
 
-	ctx := context.Background()
 	originalArgs := Arguments{
 		"count": 5,
 	}
@@ -272,7 +264,7 @@ func TestTool_Execute_DoesNotMutateInput(t *testing.T) {
 		argsCopy[k] = v
 	}
 
-	_ = tool.Execute(ctx, argsCopy)
+	_ = tool.Execute(nil, argsCopy)
 
 	// Verify original args weren't mutated
 	if originalArgs["count"] != 5 {
@@ -294,17 +286,16 @@ func TestTool_Execute_ComplexTypes(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (Person, error) {
+		func(ctx *Context, args Arguments) (Person, error) {
 			return args["person"].(Person), nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"person": Person{Name: "Alice", Age: 30},
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if result.Errored() {
 		t.Errorf("Execute() errored unexpectedly: %v", result.GetError())
@@ -328,21 +319,20 @@ func TestTool_Execute_MultipleParameters(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			first := args["first"].(string)
 			last := args["last"].(string)
 			return first + " " + last, nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"first": "John",
 		"last":  "Doe",
 		"age":   30,
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if result.Errored() {
 		t.Errorf("Execute() errored unexpectedly: %v", result.GetError())
@@ -369,18 +359,17 @@ func TestTool_Execute_NilOptionalParameter(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "result", nil
 		},
 	)
 
-	ctx := context.Background()
 	args := Arguments{
 		"name": "test",
 		// optional is not provided
 	}
 
-	result := tool.Execute(ctx, args)
+	result := tool.Execute(nil, args)
 
 	if result.Errored() {
 		t.Errorf("Execute() errored unexpectedly: %v", result.GetError())
@@ -398,7 +387,7 @@ func TestTool_Parameters(t *testing.T) {
 		"test_tool",
 		"Test tool",
 		params,
-		func(ctx context.Context, args Arguments) (string, error) {
+		func(ctx *Context, args Arguments) (string, error) {
 			return "result", nil
 		},
 	)

@@ -17,14 +17,6 @@ type Arguments = map[string]any
 // Tool represents a tool that an agent can use.
 // Agents implement this interface directly, allowing them to be used as tools.
 // Functions and other functionality can be wrapped as tools using helper functions.
-//
-// Framework callers (agents) should ensure Execute is called after PrepareExecution
-// to maintain proper Execution/Node wiring. Tools can safely assume e is non-nil and fully
-// initialized in normal framework use, as PrepareExecution will have prepared it.
-//
-// Note: e *Execution may be nil or blank only if the caller skipped PrepareExecution and
-// used Tool.Execute directly. In the intended framework usage, callers should run
-// PrepareExecution first, so tools normally see a fully initialized Execution.
 type Tool interface {
 	// Name returns the name of the tool - must be globally unique
 	Name() string
@@ -35,13 +27,12 @@ type Tool interface {
 	// Parameters returns the list of parameters for the tool.
 	Parameters() []Parameter
 
-	// Execute executes the tool with the given arguments and returns a result.
-	// The e *Execution argument provides access to shared and scoped ledgers
-	// (via e.Data(), e.GlobalData(), per-node scopes, etc.).
-	// Errors are returned as part of the ResultInterface, not as a separate error.
-	// Framework callers should use PrepareExecution before calling Execute to ensure
-	// proper Execution/Node setup.
-	Execute(e *Execution, args Arguments) ResultInterface
+	// Execute runs the tool with the given context and arguments.
+	// Execute automatically calls PrepareContext(ctx, t, args) so each
+	// tool call receives the proper root or child Context. Callers may
+	// pass nil to start a new Execution or pass an existing Context to
+	// create a child node. Errors are returned through ResultInterface.
+	Execute(ctx *Context, args Arguments) ResultInterface
 }
 
 // tool wraps a function to make it implement the Tool interface.
@@ -52,7 +43,7 @@ type tool struct {
 	parametersByName map[string]Parameter
 	// parametersOrdered preserves the declaration order provided at construction
 	parametersOrdered []Parameter
-	handler           func(e *Execution, args Arguments) ResultInterface
+	handler           func(ctx *Context, args Arguments) ResultInterface
 }
 
 // Name implements Tool.
@@ -115,21 +106,22 @@ func validateArguments(
 }
 
 // Execute implements Tool
-func (t *tool) Execute(ctx *Node, args Arguments) ResultInterface {
-	if ctx == nil {
-		e, node, err := PrepareExecution(nil, "", t, args)
-		if err != nil {
-			return NewError(err)
-		}
-	}
+func (t *tool) Execute(ctx *Context, args Arguments) ResultInterface {
+	ctx = PrepareContext(ctx, t, args)
+	ctx.Stats().MarkStarted()
+	defer ctx.Stats().MarkFinished()
 
 	validated, err := validateArguments(args, t.parametersOrdered, t.parametersByName)
 	if err != nil {
-		return NewError(err)
+		e := NewError(err)
+		ctx.SetOutput(e)
+		return e
 	}
 
 	// Execute the handler with validated arguments
-	return t.handler(ctx, validated)
+	result := t.handler(ctx, validated)
+	ctx.SetOutput(result)
+	return result
 }
 
 // NewTool creates a type-safe tool that automatically wraps the result.
@@ -138,9 +130,9 @@ func (t *tool) Execute(ctx *Node, args Arguments) ResultInterface {
 // it will be automatically converted to an error result. Otherwise, the value
 // will be wrapped in a successful result.
 //
-// The e *Execution argument allows tools to access shared and scoped ledgers
-// (via e.Data(), e.GlobalData(), per-node scopes, etc.). Framework callers
-// should use PrepareExecution before calling Execute to ensure proper Execution/Node setup.
+// The ctx *Context argument allows tools to access shared and scoped ledgers
+// (via ctx.Data(), ctx.GlobalData(), ctx.ScopedData(), etc.). Execute will
+// internally call PrepareContext to ensure proper Execution/Context setup.
 //
 // Example:
 //
@@ -153,16 +145,16 @@ func (t *tool) Execute(ctx *Node, args Arguments) ResultInterface {
 //	    "get_weather",
 //	    "Gets the current weather",
 //	    []Parameter{...},
-//	    func(e *Execution, args Arguments) (WeatherData, error) {
+//	    func(ctx *tool.Context, args tool.Arguments) (WeatherData, error) {
 //	        location := args["location"].(string)
-//	        // Can access e.Data(), e.GlobalData(), etc. if needed
+//	        // Can access ctx.Data(), ctx.GlobalData(), ctx.ScopedData(), etc. if needed
 //	        return fetchWeather(location), nil
 //	    },
 //	)
 func NewTool[T any](
 	name, description string,
 	parameters []Parameter,
-	handler func(e *Execution, args Arguments) (T, error),
+	handler func(ctx *Context, args Arguments) (T, error),
 ) Tool {
 	// Build lookup map and preserve declaration order
 	paramsMap := make(map[string]Parameter, len(parameters))
@@ -177,12 +169,12 @@ func NewTool[T any](
 		description:       description,
 		parametersByName:  paramsMap,
 		parametersOrdered: ordered,
-		handler: func(e *Execution, args Arguments) ResultInterface {
-			result, err := handler(e, args)
+		handler: func(ctx *Context, args Arguments) ResultInterface {
+			result, err := handler(ctx, args)
 			if err != nil {
 				return NewError(err)
 			}
-			return NewOK(result)
+			return NewOK[T](result)
 		},
 	}
 }
