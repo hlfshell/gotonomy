@@ -2,7 +2,6 @@
 package model
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/hlfshell/gotonomy/tool"
@@ -67,9 +66,11 @@ func (c CostsPerToken) Cost(input, output int) float64 {
 
 // Message represents a message in a conversation with a model.
 type Message struct {
-	Role       Role   `json:"role"`
-	Content    string `json:"content"`
-	ToolCallID string `json:"tool_call_id,omitempty"` // For tool role messages, the ID of the tool call this is a response to
+	Role    Role   `json:"role"`
+	Content string `json:"content"`
+	// For tool role messages, the ID of the tool call this
+	// is a response to; blank otherwise
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // Validate validates the message by ensuring that the role
@@ -128,7 +129,8 @@ func (r CompletionRequest) Validate() error {
 
 // ToolCall represents the instance of calling a tool via the model
 type ToolCall struct {
-	ID        string         `json:"id,omitempty"` // Tool call ID from the provider (e.g., OpenAI)
+	// Tool call ID from the provider.
+	ID        string         `json:"id,omitempty"`
 	Name      string         `json:"name"`
 	Arguments tool.Arguments `json:"arguments"`
 }
@@ -167,5 +169,5 @@ type Model interface {
 	Description() ModelDescription
 
 	// Complete generates a completion for the given request.
-	Complete(ctx context.Context, request CompletionRequest) (CompletionResponse, error)
+	Complete(ctx *tool.Context, request CompletionRequest) (CompletionResponse, error)
 }

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"testing"
 
 	"github.com/hlfshell/gotonomy/model"
@@ -22,7 +21,7 @@ func (m *mockModel) Description() model.ModelDescription {
 	return m.desc
 }
 
-func (m *mockModel) Complete(ctx context.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
+func (m *mockModel) Complete(ctx *tool.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
 	m.requests = append(m.requests, req)
 	m.calls++
 

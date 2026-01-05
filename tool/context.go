@@ -17,7 +17,8 @@ type Context struct {
 	execution *Execution
 
 	// Parent/children are mutated while holding Execution.mu.
-	// Context.mu is used only for per-context fields (input/output/stats/etc.).
+	// Context.mu is used only for per-context fields
+	// 		(input/output/stats/etc.).
 	parent   ContextID
 	children []ContextID
 
@@ -28,6 +29,8 @@ type Context struct {
 	// across any changes for future syncing
 	// diff creations
 
+	// TODO - mutastore instead of local datastores
+	// for flexibility
 	data        *ledger.Ledger
 	globalData  *ledger.ScopedLedger
 	contextData *ledger.ScopedLedger

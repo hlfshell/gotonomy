@@ -288,7 +288,7 @@ func (m *OpenAIModel) Description() model.ModelDescription {
 }
 
 // Complete generates a completion for the given request.
-func (m *OpenAIModel) Complete(ctx context.Context, request model.CompletionRequest) (model.CompletionResponse, error) {
+func (m *OpenAIModel) Complete(ctx *tool.Context, request model.CompletionRequest) (model.CompletionResponse, error) {
 	// Validate the request
 	if err := request.Validate(); err != nil {
 		return model.CompletionResponse{}, fmt.Errorf("invalid request: %w", err)
@@ -394,7 +394,7 @@ func (m *OpenAIModel) Complete(ctx context.Context, request model.CompletionRequ
 	}
 
 	// Make the request
-	completion, err := m.provider.client.Chat.Completions.New(ctx, chatParams)
+	completion, err := m.provider.client.Chat.Completions.New(context.Background(), chatParams)
 	if err != nil {
 		return model.CompletionResponse{}, fmt.Errorf("failed to create completion: %w", err)
 	}

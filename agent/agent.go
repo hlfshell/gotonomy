@@ -1,10 +1,7 @@
 package agent
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"time"
 
@@ -200,62 +197,32 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 	shouldContinue := a.config.IterationChecker()
 
 	// Main iteration loop - continues until checker returns false
-	iteration := 0
 	for {
-		iteration++
 		// Check if we should continue before starting this iteration
 		if err := shouldContinue(session); err != nil {
-			fmt.Printf("[AGENT DEBUG] Stopping due to iteration checker: %v\n", err)
 			return tool.NewError(err)
 		}
 
 		//todo - no magic strings, consts for names
 		ctx.Stats().Incr("iterations")
-		fmt.Printf("\n[AGENT DEBUG] ===== Iteration %d =====\n", iteration)
 
 		// 1) Build messages from args + session.
 		messages, err := a.prepareInput(args, session)
 		if err != nil {
-			fmt.Printf("[AGENT DEBUG] Error building messages: %v\n", err)
 			return tool.NewError(fmt.Errorf("building messages: %w", err))
-		}
-		fmt.Printf("[AGENT DEBUG] Prepared %d messages for model\n", len(messages))
-		for i, msg := range messages {
-			fmt.Printf("[AGENT DEBUG]   Message[%d]: %s: %q\n", i, msg.Role, truncateString(msg.Content, 150))
-		}
-		fmt.Printf("[AGENT DEBUG] Available tools: %d\n", len(a.toolsSlice()))
-		for _, t := range a.toolsSlice() {
-			fmt.Printf("[AGENT DEBUG]   - %s: %s\n", t.Name(), truncateString(t.Description(), 60))
 		}
 
 		// 2) Create Step.
 		step := NewStep(messages)
 
 		// 3) Call model.
-		//TODO - use tool contexts, not golang contexts!
-		fmt.Printf("[AGENT DEBUG] Calling model...\n")
-
-		// Write outgoing messages to debug file
-		debugFilename := fmt.Sprintf("debug_iteration_%d_%s.json", iteration, time.Now().Format("150405"))
-		debugData := map[string]interface{}{
-			"iteration":         iteration,
-			"timestamp":         time.Now().Format(time.RFC3339),
-			"outgoing_messages": messages,
-			"tools_count":       len(a.toolsSlice()),
-		}
-		if debugJSON, err := json.MarshalIndent(debugData, "", "  "); err == nil {
-			os.WriteFile(debugFilename, debugJSON, 0644)
-			fmt.Printf("[AGENT DEBUG] Outgoing messages written to: %s\n", debugFilename)
-		}
-
-		resp, err := a.model.Complete(context.Background(), model.CompletionRequest{
+		resp, err := a.model.Complete(ctx, model.CompletionRequest{
 			Messages: messages,
 			Tools:    a.toolsSlice(),
 			Config:   model.ModelConfig{},
 		})
 
 		if err != nil {
-			fmt.Printf("[AGENT DEBUG] Model call error: %v\n", err)
 			// Record error in session and return an error result.
 			step.SetResponse(Response{
 				Output: model.Message{
@@ -269,33 +236,6 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 			return tool.NewError(err)
 		}
 
-		fmt.Printf("[AGENT DEBUG] Model response received:\n")
-		fmt.Printf("[AGENT DEBUG]   Text: %q\n", truncateString(resp.Text, 200))
-		fmt.Printf("[AGENT DEBUG]   Tool calls: %d\n", len(resp.ToolCalls))
-		for i, tc := range resp.ToolCalls {
-			fmt.Printf("[AGENT DEBUG]     [%d] %s(%v)\n", i, tc.Name, tc.Arguments)
-		}
-		fmt.Printf("[AGENT DEBUG]   Usage: %d input, %d output tokens\n", resp.UsageStats.InputTokens, resp.UsageStats.OutputTokens)
-
-		// Write raw response to debug file
-		responseDebugData := map[string]interface{}{
-			"iteration": iteration,
-			"timestamp": time.Now().Format(time.RFC3339),
-			"response": map[string]interface{}{
-				"text":       resp.Text,
-				"tool_calls": resp.ToolCalls,
-				"usage": map[string]interface{}{
-					"input_tokens":  resp.UsageStats.InputTokens,
-					"output_tokens": resp.UsageStats.OutputTokens,
-				},
-			},
-		}
-		if responseDebugJSON, err := json.MarshalIndent(responseDebugData, "", "  "); err == nil {
-			responseDebugFilename := fmt.Sprintf("debug_response_%d_%s.json", iteration, time.Now().Format("150405"))
-			os.WriteFile(responseDebugFilename, responseDebugJSON, 0644)
-			fmt.Printf("[AGENT DEBUG] Raw response written to: %s\n", responseDebugFilename)
-		}
-
 		// 4) Attach response to step & session.
 		step.SetResponse(ResponseFromModel(resp))
 		session.AddStep(step)
@@ -304,26 +244,16 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 		if len(resp.ToolCalls) > 0 {
 			//TODO - no magic strings
 			ctx.Stats().Add("tool_calls", int64(len(resp.ToolCalls)))
-			fmt.Printf("[AGENT DEBUG] Executing %d tool calls...\n", len(resp.ToolCalls))
 			// Execute tools before making any extraction decisions.
 			// Some extractors may depend on tool outputs being present
 			// in the session's conversation.
 			if err := a.handleToolCalls(ctx, session, step); err != nil {
-				fmt.Printf("[AGENT DEBUG] Tool execution error: %v\n", err)
 				return tool.NewError(err)
 			}
-			fmt.Printf("[AGENT DEBUG] Tool calls completed\n")
 		}
 
-		fmt.Printf("[AGENT DEBUG] Calling extractResult...\n")
 		decision := a.extractResult(a, ctx, session)
-		fmt.Printf("[AGENT DEBUG] ExtractDecision:\n")
-		fmt.Printf("[AGENT DEBUG]   Done: %v\n", decision.Done)
-		fmt.Printf("[AGENT DEBUG]   Result: %v (type: %T)\n", decision.Result, decision.Result)
-		fmt.Printf("[AGENT DEBUG]   Warnings: %v\n", decision.Warnings)
-		fmt.Printf("[AGENT DEBUG]   Feedback messages: %d\n", len(decision.Feedback))
 		if decision.Err != nil {
-			fmt.Printf("[AGENT DEBUG]   Error: %v\n", decision.Err)
 			return tool.NewError(decision.Err)
 		}
 
@@ -334,43 +264,26 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 		}
 
 		if !decision.Done {
-			fmt.Printf("[AGENT DEBUG] Not done, continuing to next iteration...\n")
 			// Continue iterating; extractor has not reached a terminal state.
 			continue
 		}
 
-		fmt.Printf("[AGENT DEBUG] Terminal state reached!\n")
 		// Terminal state reached - determine the final result to return.
 		result := decision.Result
 		if result == nil {
-			fmt.Printf("[AGENT DEBUG] Result is nil, falling back to last assistant message\n")
 			// Fall back to the last assistant message text.
 			last := session.LastStep()
 			if last != nil {
 				result = last.GetResponse().Output.Content
-				fmt.Printf("[AGENT DEBUG] Fallback result: %q\n", result)
-			} else {
-				fmt.Printf("[AGENT DEBUG] No last step available for fallback\n")
 			}
-		} else {
-			fmt.Printf("[AGENT DEBUG] Using decision result: %v\n", result)
 		}
 
 		if len(decision.Warnings) > 0 {
 			ctx.Stats().Set("agent_extract_warnings", decision.Warnings)
 		}
 
-		fmt.Printf("[AGENT DEBUG] Returning final result: %v (type: %T)\n", result, result)
 		return tool.NewOK(result)
 	}
-}
-
-// truncateString truncates a string for debug output
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 // toolsSlice returns the agent's tools in a deterministic (sorted-by-name) slice.

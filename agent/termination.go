@@ -63,27 +63,23 @@ func ExtractorFromParser(
 	) ExtractDecision {
 		last := session.LastStep()
 		if last == nil {
-			fmt.Printf("[AGENT DEBUG] Extractor: No last step\n")
 			return ExtractDecision{}
 		}
 
 		resp := last.GetResponse()
-		fmt.Printf("[AGENT DEBUG] Extractor: Last step has %d tool calls\n", len(resp.ToolCalls))
 		if len(resp.ToolCalls) > 0 {
+
 			// Still have tool calls to resolve; keep going.
-			fmt.Printf("[AGENT DEBUG] Extractor: Tool calls pending, continuing...\n")
 			return ExtractDecision{
 				Done: false,
 			}
 		}
 
 		// No tool calls - time to parse!
-		fmt.Printf("[AGENT DEBUG] Extractor: No tool calls, parsing response: %q\n", truncateString(resp.Output.Content, 200))
 		parsed, err := parser(resp.Output.Content)
 		warnings := []string{}
 		done := true
 		if err != nil {
-			fmt.Printf("[AGENT DEBUG] Extractor: Parser error: %v\n", err)
 			warnings = append(warnings, fmt.Sprintf("failed to parse response: %v", err))
 			// If retryOnError is true, we leave Done as false so that the
 			// agent can iterate again, optionally using feedback messages
@@ -91,10 +87,7 @@ func ExtractorFromParser(
 			// output from the error.
 			if retryOnError {
 				done = false
-				fmt.Printf("[AGENT DEBUG] Extractor: Retry on error enabled, will continue\n")
 			}
-		} else {
-			fmt.Printf("[AGENT DEBUG] Extractor: Parsed successfully: %v (type: %T)\n", parsed, parsed)
 		}
 		return ExtractDecision{
 			Done:     done,

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/hlfshell/gotonomy/model"
 	"github.com/hlfshell/gotonomy/tool"
 )
@@ -104,17 +105,27 @@ func processToolResult(
 }
 
 // appendToolMessagesToSession adds all tool results as messages to
-// the session. Uses system role instead of tool role to avoid OpenAI's
-// tool message format requirements.
+// the session.
 func appendToolMessagesToSession(sess *Session, results []toolResult) {
 	for _, result := range results {
-		// Format tool result as a system message with tool name and result
 		content := fmt.Sprintf("Tool %s returned: %s", result.call.Name, result.content)
+		if result.call.ID != "" {
+			content = fmt.Sprintf("ToolCall %s (%s) returned: %s", result.call.ID, result.call.Name, result.content)
+		}
 		systemMsg := model.Message{
-			Role:    model.RoleSystem,
-			Content: content,
+			Role:       model.RoleSystem,
+			Content:    content,
+			ToolCallID: result.call.ID,
 		}
 		sess.AppendToolMessage(systemMsg)
+	}
+}
+
+func ensureToolCallIDs(calls []model.ToolCall) {
+	for i := range calls {
+		if calls[i].ID == "" {
+			calls[i].ID = uuid.NewString()
+		}
 	}
 }
 
@@ -132,6 +143,10 @@ func (a *Agent) handleToolCalls(
 	if len(calls) == 0 {
 		return nil
 	}
+
+	// Ensure we can correlate a tool call with its tool result message later.
+	// Provider IDs are preferred; otherwise we generate stable IDs for this run.
+	ensureToolCallIDs(calls)
 
 	// Validate all tools exist before starting execution
 	if err := a.validateToolsCalled(calls); err != nil {
@@ -162,10 +177,8 @@ func (a *Agent) handleToolCalls(
 			t := a.tools[toolName]
 			args := call.Arguments
 
-			fmt.Printf("[AGENT DEBUG] Executing tool [%d]: %s with args: %v\n", idx, toolName, args)
 			// Execute the tool
 			res := t.Execute(parentCtx, args)
-			fmt.Printf("[AGENT DEBUG] Tool [%d] %s completed, errored: %v\n", idx, toolName, res.Errored())
 
 			var finalResult tool.ResultInterface = res
 			var contentErr error

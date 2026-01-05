@@ -401,17 +401,17 @@ func TestAppendToolMessagesToSession(t *testing.T) {
 	results := []toolResult{
 		{
 			index:   0,
-			call:    model.ToolCall{Name: "tool1"},
+			call:    model.ToolCall{ID: "call-1", Name: "tool1"},
 			content: "result 1",
 		},
 		{
 			index:   1,
-			call:    model.ToolCall{Name: "tool2"},
+			call:    model.ToolCall{ID: "call-2", Name: "tool2"},
 			content: "result 2",
 		},
 		{
 			index:   2,
-			call:    model.ToolCall{Name: "tool3"},
+			call:    model.ToolCall{ID: "call-3", Name: "tool3"},
 			content: "result 3",
 		},
 	}
@@ -440,9 +440,12 @@ func TestAppendToolMessagesToSession(t *testing.T) {
 		if toolMsg.Role != model.RoleSystem {
 			t.Errorf("Message %d: expected RoleSystem, got %v", i, toolMsg.Role)
 		}
-		expected := fmt.Sprintf("Tool %s returned: %s", result.call.Name, result.content)
+		expected := fmt.Sprintf("ToolCall %s (%s) returned: %s", result.call.ID, result.call.Name, result.content)
 		if toolMsg.Content != expected {
 			t.Errorf("Message %d: expected content %q, got %q", i, expected, toolMsg.Content)
+		}
+		if toolMsg.ToolCallID != result.call.ID {
+			t.Errorf("Message %d: expected ToolCallID %q, got %q", i, result.call.ID, toolMsg.ToolCallID)
 		}
 	}
 }
@@ -527,13 +530,13 @@ func TestHandleToolCalls_SingleTool_Success(t *testing.T) {
 	// Find tool message
 	found := false
 	for _, msg := range messages {
-		if msg.Role == model.RoleSystem && contains(msg.Content, "tool1 result") {
+		if msg.Role == model.RoleSystem && msg.ToolCallID != "" && contains(msg.Content, "tool1 result") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("Expected tool message with 'tool1 result' to be added")
+		t.Error("Expected tool message with non-empty ToolCallID and 'tool1 result' to be added")
 	}
 }
 
