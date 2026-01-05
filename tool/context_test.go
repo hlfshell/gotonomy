@@ -75,20 +75,29 @@ func TestNode_ScopedData(t *testing.T) {
 
 	// Get scoped data
 	scope1 := "test-scope-1"
-	scoped1 := node.ScopedData(scope1)
+	scoped1, err := node.ScopedData(scope1)
+	if err != nil {
+		t.Fatalf("ScopedData failed: %v", err)
+	}
 	if scoped1 == nil {
 		t.Fatal("ScopedData should not return nil")
 	}
 
 	// Getting same scope should return same instance
-	scoped1Again := node.ScopedData(scope1)
+	scoped1Again, err := node.ScopedData(scope1)
+	if err != nil {
+		t.Fatalf("ScopedData failed: %v", err)
+	}
 	if scoped1 != scoped1Again {
 		t.Fatal("ScopedData should return the same instance for the same scope")
 	}
 
 	// Different scope should return different instance
 	scope2 := "test-scope-2"
-	scoped2 := node.ScopedData(scope2)
+	scoped2, err := node.ScopedData(scope2)
+	if err != nil {
+		t.Fatalf("ScopedData failed: %v", err)
+	}
 	if scoped2 == nil {
 		t.Fatal("ScopedData should not return nil")
 	}
@@ -108,7 +117,11 @@ func TestNode_ScopedData_Concurrent(t *testing.T) {
 		go func(id int) {
 			defer func() { done <- true }()
 			scope := "scope"
-			scoped := node.ScopedData(scope)
+			scoped, err := node.ScopedData(scope)
+			if err != nil {
+				t.Errorf("ScopedData failed: %v", err)
+				return
+			}
 			if scoped == nil {
 				t.Errorf("ScopedData should not return nil")
 			}
@@ -121,7 +134,10 @@ func TestNode_ScopedData_Concurrent(t *testing.T) {
 	}
 
 	// All should get the same instance
-	scoped := node.ScopedData("scope")
+	scoped, err := node.ScopedData("scope")
+	if err != nil {
+		t.Fatalf("ScopedData failed: %v", err)
+	}
 	if scoped == nil {
 		t.Fatal("ScopedData should not return nil")
 	}
@@ -285,7 +301,7 @@ func TestNode_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer func() { done <- true }()
 			scope := "scope"
-			_ = node.ScopedData(scope)
+			_, _ = node.ScopedData(scope)
 		}()
 	}
 

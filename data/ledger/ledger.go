@@ -17,11 +17,49 @@ const (
 
 // Entry represents a single entry in the data ledger tracking state changes over time
 type Entry struct {
-	Scope     string          `json:"scope"`
+	Scopes    []string        `json:"scopes"` // Nested scopes as a slice
 	Key       string          `json:"key"`
 	Value     json.RawMessage `json:"value"`
 	Timestamp time.Time       `json:"timestamp"`
 	Operation Operation       `json:"operation"`
+	// Scope is kept for backward compatibility
+	// It is automatically populated from Scopes when marshaling
+	Scope string `json:"scope,omitempty"`
+}
+
+// MarshalJSON ensures Scope is populated from Scopes for backward compatibility
+func (e Entry) MarshalJSON() ([]byte, error) {
+	// Populate Scope from Scopes if not set
+	if e.Scope == "" && len(e.Scopes) > 0 {
+		e.Scope = strings.Join(e.Scopes, internalScopeSeparator)
+	}
+	type Alias Entry
+	return json.Marshal((*Alias)(&e))
+}
+
+// UnmarshalJSON ensures Scopes is populated from Scope for backward compatibility
+func (e *Entry) UnmarshalJSON(data []byte) error {
+	type Alias Entry
+	aux := (*Alias)(e)
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	// Populate Scopes from Scope if Scopes is empty
+	if len(e.Scopes) == 0 && e.Scope != "" {
+		e.Scopes = parseScopeString(e.Scope)
+	} else if len(e.Scopes) > 0 && e.Scope == "" {
+		// Populate Scope from Scopes
+		e.Scope = strings.Join(e.Scopes, internalScopeSeparator)
+	}
+	return nil
+}
+
+// parseScopeString parses a scope string (which may contain "::") into a slice of scopes
+func parseScopeString(scope string) []string {
+	if scope == "" {
+		return []string{}
+	}
+	return strings.Split(scope, internalScopeSeparator)
 }
 
 func NewEntry[T any](scope, key string, value T) (Entry, error) {
@@ -29,8 +67,10 @@ func NewEntry[T any](scope, key string, value T) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("failed to marshal value for key %s: %w", key, err)
 	}
+	scopes := parseScopeString(scope)
 	return Entry{
-		Scope:     scope,
+		Scopes:    scopes,
+		Scope:     scope, // Keep for backward compatibility
 		Key:       key,
 		Value:     data,
 		Timestamp: time.Now(),
@@ -51,22 +91,35 @@ type Ledger struct {
 	mu   sync.RWMutex
 }
 
-// splitScopeKey splits a fullKey of the form "scope:key" into scope and key,
-// where scopes themselves may contain ":" characters. It always uses the LAST
-// ":" as the separator. It returns ok=false if the key is malformed.
-func splitScopeKey(fullKey string) (scope string, key string, ok bool) {
-	idx := strings.LastIndex(fullKey, ":")
-	if idx <= 0 || idx == len(fullKey)-1 {
-		// Either no ":", starts with ":", or ends with ":" – treat as malformed.
-		return "", "", false
-	}
-	return fullKey[:idx], fullKey[idx+1:], true
-}
-
 func NewLedger() *Ledger {
 	return &Ledger{
 		data: make(map[string][]Entry),
+		mu:   sync.RWMutex{},
 	}
+}
+
+const (
+	// internalScopeSeparator is used internally by the ledger package
+	// to create nested scopes. External callers cannot use "::" in
+	// scope or key parameters.
+	internalScopeSeparator = "::"
+)
+
+// splitScopeKey splits a fullKey of the form "scope::key" into scopes (as a slice) and key,
+// where scopes themselves may contain "::" characters (and are thus split further). It always uses the LAST
+// "::" as the separator for the key, but returns all individual scopes in the slice.
+// It returns ok=false if the key is malformed.
+func splitScopeKey(fullKey string) (scopes []string, key string, ok bool) {
+	idx := strings.LastIndex(fullKey, internalScopeSeparator)
+	if idx <= 0 || idx == len(fullKey)-1 {
+		// Either no ":", starts with ":", or ends with ":" – treat as malformed.
+		return nil, "", false
+	}
+	scopesPart := fullKey[:idx]
+	key = fullKey[idx+len(internalScopeSeparator):]
+	// Split all parent scopes by "::"
+	scopes = strings.Split(scopesPart, internalScopeSeparator)
+	return scopes, key, true
 }
 
 func (ledger *Ledger) append(fullKey string, entry Entry) {
@@ -79,16 +132,19 @@ func (ledger *Ledger) append(fullKey string, entry Entry) {
 	ledger.data[fullKey] = append(ledger.data[fullKey], entry)
 }
 
-func (ledger *Ledger) SetData(scope, key string, value any) error {
-	fullKey := fmt.Sprintf("%s:%s", scope, key)
+// setDataInternal sets data without validating scope/key (for internal use)
+func (ledger *Ledger) setDataInternal(scope, key string, value any) error {
+	fullKey := fmt.Sprintf("%s::%s", scope, key)
 
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("failed to marshal value for key %s: %w", key, err)
 	}
 
+	scopes := parseScopeString(scope)
 	entry := Entry{
-		Scope:     scope,
+		Scopes:    scopes,
+		Scope:     scope, // Keep for backward compatibility
 		Key:       key,
 		Value:     data,
 		Timestamp: time.Now(),
@@ -103,6 +159,13 @@ func (ledger *Ledger) SetData(scope, key string, value any) error {
 	return nil
 }
 
+func (ledger *Ledger) SetData(scope, key string, value any) error {
+	if err := validateScopeKey(scope, key); err != nil {
+		return err
+	}
+	return ledger.setDataInternal(scope, key, value)
+}
+
 func (ledger *Ledger) SetDataFunc(
 	scope, key string,
 	fn func(Entry) (Entry, error),
@@ -110,7 +173,7 @@ func (ledger *Ledger) SetDataFunc(
 	ledger.mu.Lock()
 	defer ledger.mu.Unlock()
 
-	fullKey := fmt.Sprintf("%s:%s", scope, key)
+	fullKey := fmt.Sprintf("%s::%s", scope, key)
 	if _, ok := ledger.data[fullKey]; !ok {
 		return fmt.Errorf("key %s does not exist", key)
 	}
@@ -125,18 +188,23 @@ func (ledger *Ledger) SetDataFunc(
 	return nil
 }
 
-func SetDataFunc[T any](
+// setDataFuncInternal sets data using a function without validating scope/key (for internal use)
+func setDataFuncInternal[T any](
 	ledger *Ledger,
 	scope, key string,
 	fn func(T) (T, error),
 ) error {
 	var zero T
-	fullKey := fmt.Sprintf("%s:%s", scope, key)
-	if _, ok := ledger.data[fullKey]; !ok {
+	fullKey := fmt.Sprintf("%s::%s", scope, key)
+	ledger.mu.RLock()
+	entries, ok := ledger.data[fullKey]
+	if !ok || len(entries) == 0 {
+		ledger.mu.RUnlock()
 		return fmt.Errorf("key %s does not exist", key)
 	}
+	entry := entries[len(entries)-1]
+	ledger.mu.RUnlock()
 
-	entry := ledger.data[fullKey][len(ledger.data[fullKey])-1]
 	err := json.Unmarshal(entry.Value, &zero)
 	if err != nil {
 		return fmt.Errorf("failed to unmarshal value for key %s: %w", key, err)
@@ -151,16 +219,33 @@ func SetDataFunc[T any](
 	if err != nil {
 		return fmt.Errorf("failed to create new entry for key %s: %w", key, err)
 	}
+
+	ledger.mu.Lock()
 	ledger.append(fullKey, newEntry)
+	ledger.mu.Unlock()
 
 	return nil
 }
 
-func (ledger *Ledger) DeleteData(scope, key string) error {
-	fullKey := fmt.Sprintf("%s:%s", scope, key)
+func SetDataFunc[T any](
+	ledger *Ledger,
+	scope, key string,
+	fn func(T) (T, error),
+) error {
+	if err := validateScopeKey(scope, key); err != nil {
+		return err
+	}
+	return setDataFuncInternal[T](ledger, scope, key, fn)
+}
 
+// deleteDataInternal deletes data without validating scope/key (for internal use)
+func (ledger *Ledger) deleteDataInternal(scope, key string) error {
+	fullKey := fmt.Sprintf("%s::%s", scope, key)
+
+	scopes := parseScopeString(scope)
 	entry := Entry{
-		Scope:     scope,
+		Scopes:    scopes,
+		Scope:     scope, // Keep for backward compatibility
 		Key:       key,
 		Value:     nil,
 		Timestamp: time.Now(),
@@ -175,11 +260,19 @@ func (ledger *Ledger) DeleteData(scope, key string) error {
 	return nil
 }
 
-func (ledger *Ledger) GetData(scope, key string) (Entry, error) {
+func (ledger *Ledger) DeleteData(scope, key string) error {
+	if err := validateScopeKey(scope, key); err != nil {
+		return err
+	}
+	return ledger.deleteDataInternal(scope, key)
+}
+
+// getDataInternal gets data without validating scope/key (for internal use)
+func (ledger *Ledger) getDataInternal(scope, key string) (Entry, error) {
 	ledger.mu.RLock()
 	defer ledger.mu.RUnlock()
 
-	fullKey := fmt.Sprintf("%s:%s", scope, key)
+	fullKey := fmt.Sprintf("%s::%s", scope, key)
 	entries, ok := ledger.data[fullKey]
 	if !ok || len(entries) == 0 {
 		return Entry{}, fmt.Errorf("key %s does not exist", key)
@@ -191,6 +284,13 @@ func (ledger *Ledger) GetData(scope, key string) (Entry, error) {
 	}
 
 	return latestEntry, nil
+}
+
+func (ledger *Ledger) GetData(scope, key string) (Entry, error) {
+	if err := validateScopeKey(scope, key); err != nil {
+		return Entry{}, err
+	}
+	return ledger.getDataInternal(scope, key)
 }
 
 func GetData[T any](ledger *Ledger, scope string, key string) (T, error) {
@@ -207,17 +307,25 @@ func GetData[T any](ledger *Ledger, scope string, key string) (T, error) {
 	return zero, nil
 }
 
-func (ledger *Ledger) GetDataHistory(scope, key string) ([]Entry, error) {
+// getDataHistoryInternal gets data history without validating scope/key (for internal use)
+func (ledger *Ledger) getDataHistoryInternal(scope, key string) ([]Entry, error) {
 	ledger.mu.RLock()
 	defer ledger.mu.RUnlock()
 
-	fullKey := fmt.Sprintf("%s:%s", scope, key)
+	fullKey := fmt.Sprintf("%s::%s", scope, key)
 	entries, ok := ledger.data[fullKey]
 	if !ok {
 		return nil, fmt.Errorf("key %s does not exist", key)
 	}
 
 	return entries, nil
+}
+
+func (ledger *Ledger) GetDataHistory(scope, key string) ([]Entry, error) {
+	if err := validateScopeKey(scope, key); err != nil {
+		return nil, err
+	}
+	return ledger.getDataHistoryInternal(scope, key)
 }
 
 func GetDataHistory[T any](ledger *Ledger, scope string, key string) ([]T, error) {
@@ -248,11 +356,13 @@ func (ledger *Ledger) GetScopes() []string {
 	scopeMap := make(map[string]bool)
 	for fullKey := range ledger.data {
 		// Extract scope from fullKey (format: "scope:key") using the helper.
-		scope, _, ok := splitScopeKey(fullKey)
+		scopes, _, ok := splitScopeKey(fullKey)
 		if !ok {
 			continue
 		}
-		scopeMap[scope] = true
+		for _, scope := range scopes {
+			scopeMap[scope] = true
+		}
 	}
 
 	scopes := make([]string, 0, len(scopeMap))
@@ -263,100 +373,78 @@ func (ledger *Ledger) GetScopes() []string {
 	return scopes
 }
 
-// GetKeys grabs all keys organized by scope; for example:
+// GetKeys grabs all keys organized by scope hierarchy as nested maps.
+// For nested scopes like "parent::child", the structure will be:
 //
 //	{
-//	  "scope1": ["key1", "key2"],
+//	  "parent": {
+//	    "child": ["key1", "key2"]
+//	  },
 //	  "scope2": ["key3", "key4"]
 //	}
-func (ledger *Ledger) GetKeys() map[string][]string {
+func (ledger *Ledger) GetKeys() map[string]any {
 	ledger.mu.RLock()
 	defer ledger.mu.RUnlock()
 
-	result := make(map[string][]string)
-	keyMap := make(map[string]map[string]bool) // scope -> key -> bool
+	// Build nested structure
+	result := make(map[string]any)
 
 	for fullKey := range ledger.data {
-		scope, key, ok := splitScopeKey(fullKey)
+		scopes, key, ok := splitScopeKey(fullKey)
 		if !ok {
 			continue
 		}
 
-		if keyMap[scope] == nil {
-			keyMap[scope] = make(map[string]bool)
-		}
-		keyMap[scope][key] = true
-	}
-
-	// Convert to map[string][]string
-	for scope, keys := range keyMap {
-		keyList := make([]string, 0, len(keys))
-		for key := range keys {
-			keyList = append(keyList, key)
-		}
-		result[scope] = keyList
-	}
-
-	return result
-}
-
-// Ledgers are marshalled to be only the data, stored
-// via scope. So:
-//
-//	{
-//	  "scope": [
-//	    {
-//	      "key": "key1",
-//	      "history": [
-//	        {
-//	          "key": "key1",
-//	          "value": "value1",
-//	          "timestamp": "2021-01-01T00:00:00Z",
-//	          "operation": "set"
-//	        }
-//	      ]
-//	    },
-//	    ...
-//	  ]
-//	}
-func (ledger *Ledger) MarshalJSON() ([]byte, error) {
-	ledger.mu.RLock()
-	defer ledger.mu.RUnlock()
-
-	result := make(map[string]map[string][]Entry)
-	for fullKey, entries := range ledger.data {
-		scope, key, ok := splitScopeKey(fullKey)
-		if !ok {
-			// Skip malformed keys; ledger invariants should normally prevent this.
-			continue
-		}
-
-		if _, ok := result[scope]; !ok {
-			result[scope] = map[string][]Entry{}
-		}
-		result[scope][key] = entries
-	}
-	return json.Marshal(result)
-}
-
-func (ledger *Ledger) UnmarshalJSON(data []byte) error {
-	// We convert to a map of maps first due to the
-	// style that we marshal ledgers to
-	var result map[string]map[string][]Entry
-	if err := json.Unmarshal(data, &result); err != nil {
-		return err
-	}
-	ledger.mu.Lock()
-	defer ledger.mu.Unlock()
-
-	// Transform from map[scope]map[key][]Entry back to
-	// map["scope:key"][]Entry
-	ledger.data = make(map[string][]Entry)
-	for scope, keys := range result {
-		for key, entries := range keys {
-			fullKey := fmt.Sprintf("%s:%s", scope, key)
-			ledger.data[fullKey] = entries
+		// Navigate/create nested structure
+		current := result
+		for i, scope := range scopes {
+			if i == len(scopes)-1 {
+				// Last scope level - this is where keys go
+				if current[scope] == nil {
+					current[scope] = make(map[string]bool)
+				}
+				// Check if it's already a map[string]any (nested scopes exist)
+				if nextMap, ok := current[scope].(map[string]any); ok {
+					// Nested scopes already exist, we need to add keys to a special "_keys" entry
+					if nextMap["_keys"] == nil {
+						nextMap["_keys"] = make(map[string]bool)
+					}
+					keysMap := nextMap["_keys"].(map[string]bool)
+					keysMap[key] = true
+				} else {
+					// No nested scopes yet, use direct keys map
+					keysMap, ok := current[scope].(map[string]bool)
+					if !ok {
+						// Type mismatch, skip
+						continue
+					}
+					keysMap[key] = true
+				}
+			} else {
+				// Intermediate scope level
+				if current[scope] == nil {
+					current[scope] = make(map[string]any)
+				}
+				next, ok := current[scope].(map[string]any)
+				if !ok {
+					// Type mismatch - might be map[string]bool (keys), convert it
+					if keysMap, ok := current[scope].(map[string]bool); ok {
+						// Convert to nested structure with keys
+						newMap := make(map[string]any)
+						newMap["_keys"] = keysMap
+						current[scope] = newMap
+						next = newMap
+					} else {
+						// Unknown type, create new
+						current[scope] = make(map[string]any)
+						next = current[scope].(map[string]any)
+					}
+				}
+				current = next
+			}
 		}
 	}
-	return nil
+
+	// Convert boolean maps to string slices
+	return keysToSlices(result)
 }

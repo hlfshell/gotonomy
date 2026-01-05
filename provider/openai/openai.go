@@ -14,6 +14,8 @@ import (
 	"github.com/hlfshell/gotonomy/tool"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // Constants
@@ -25,7 +27,8 @@ const (
 
 // OpenAI implements the provider.Provider interface for OpenAI.
 type OpenAI struct {
-	client *openai.Client
+	client     openai.Client
+	modelCards map[string]model.ModelDescription // Cache of loaded model cards keyed by model name
 }
 
 // NewOpenAIProvider creates a new OpenAI provider with the given configuration.
@@ -53,9 +56,19 @@ func NewOpenAIProvider(config provider.Config) (provider.Provider, error) {
 	// Create the OpenAI client
 	client := openai.NewClient(opts...)
 
-	return &OpenAI{
-		client: client,
-	}, nil
+	provider := &OpenAI{
+		client:     client,
+		modelCards: make(map[string]model.ModelDescription),
+	}
+
+	// Load model cards from the provider's directory
+	if err := provider.loadModelCards(); err != nil {
+		// Log but don't fail - model cards are optional, we can still use API
+		// In production, you might want to use a logger here
+		_ = err
+	}
+
+	return provider, nil
 }
 
 // Name returns the name of the provider.
@@ -77,19 +90,45 @@ func (p *OpenAI) DefaultConfig() provider.Config {
 	}
 }
 
+// loadModelCards loads model cards from the provider's models.yaml file.
+// It uses the default paths which will automatically find provider model cards.
+// TODO: Implement model card loading when model.LoadDefaultPaths() is available
+func (p *OpenAI) loadModelCards() error {
+	// Model card loading is temporarily disabled until model.LoadDefaultPaths() is implemented
+	// The provider will still work by discovering models via the API
+	return nil
+}
+
 // ListAvailableModels returns a list of available models from OpenAI.
+// It uses model cards as the primary source, with API results as a fallback.
 func (p *OpenAI) ListAvailableModels(ctx context.Context) ([]model.ModelDescription, error) {
-	// List models using the OpenAI client
-	models, err := p.client.Models.List(ctx)
+	// Start with models from model cards
+	modelDescriptions := make([]model.ModelDescription, 0, len(p.modelCards))
+	for _, desc := range p.modelCards {
+		modelDescriptions = append(modelDescriptions, desc)
+	}
+
+	// Optionally merge with API results for models not in cards
+	// This allows discovering new models via API while using cards for known models
+	apiModels, err := p.client.Models.List(ctx)
 	if err != nil {
+		// If API call fails but we have model cards, return those
+		if len(modelDescriptions) > 0 {
+			return modelDescriptions, nil
+		}
 		return nil, fmt.Errorf("failed to list models: %w", err)
 	}
 
-	// Filter and map the models to ModelDescription
-	modelDescriptions := []model.ModelDescription{}
-	for _, m := range models.Data {
+	// Add API models that aren't already in our cards
+	for _, m := range apiModels.Data {
 		// Only include chat models
 		if strings.Contains(m.ID, "gpt") {
+			// Check if we already have this model from cards
+			if _, exists := p.modelCards[m.ID]; exists {
+				continue
+			}
+
+			// Create a basic ModelDescription for API-discovered models
 			info := model.ModelDescription{
 				Model:       m.ID,
 				Provider:    "openai",
@@ -97,7 +136,7 @@ func (p *OpenAI) ListAvailableModels(ctx context.Context) ([]model.ModelDescript
 				CanUseTools: true,
 			}
 
-			// Set context window size based on model
+			// Set context window size based on model (fallback defaults)
 			switch {
 			case strings.Contains(m.ID, "gpt-4o"):
 				info.MaxContextTokens = 128000
@@ -115,10 +154,10 @@ func (p *OpenAI) ListAvailableModels(ctx context.Context) ([]model.ModelDescript
 				info.MaxContextTokens = 4096
 			}
 
-			// Set costs (example values - should be updated with actual pricing)
+			// Set default costs (should be updated in model cards)
 			info.Costs = model.CostsPerToken{
-				Input:  0.00001, // $0.01 per 1M tokens
-				Output: 0.00003, // $0.03 per 1M tokens
+				Input:  0.00001,
+				Output: 0.00003,
 			}
 
 			modelDescriptions = append(modelDescriptions, info)
@@ -160,24 +199,27 @@ func (p *OpenAI) ListAvailableEmbeddingModels(ctx context.Context) ([]embedding.
 
 // GetModel returns a model instance by name.
 func (p *OpenAI) GetModel(ctx context.Context, modelName string) (model.Model, error) {
-	// Check if the model exists
-	models, err := p.ListAvailableModels(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list models: %w", err)
-	}
-
-	var modelInfo model.ModelDescription
-	found := false
-	for _, info := range models {
-		if info.Model == modelName {
-			modelInfo = info
-			found = true
-			break
-		}
-	}
-
+	// First check model cards cache
+	modelInfo, found := p.modelCards[modelName]
 	if !found {
-		return nil, fmt.Errorf("model %s not found", modelName)
+		// Fallback to listing from API
+		models, err := p.ListAvailableModels(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list models: %w", err)
+		}
+
+		found = false
+		for _, info := range models {
+			if info.Model == modelName {
+				modelInfo = info
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			return nil, fmt.Errorf("model %s not found", modelName)
+		}
 	}
 
 	// Create and return the model
@@ -185,6 +227,24 @@ func (p *OpenAI) GetModel(ctx context.Context, modelName string) (model.Model, e
 		provider:  p,
 		modelInfo: modelInfo,
 	}, nil
+}
+
+// AddModel allows you to add a model instance by ModelDescription.
+// This is useful for adding custom models or models discovered at runtime.
+func (p *OpenAI) AddModel(ctx context.Context, modelDesc model.ModelDescription) error {
+	// Validate the model description
+	if err := modelDesc.Validate(); err != nil {
+		return fmt.Errorf("invalid model description: %w", err)
+	}
+
+	// Ensure the provider matches
+	if modelDesc.Provider != "openai" {
+		return fmt.Errorf("model provider %s does not match OpenAI provider", modelDesc.Provider)
+	}
+
+	// Add to cache
+	p.modelCards[modelDesc.Model] = modelDesc
+	return nil
 }
 
 // GetEmbeddingModel returns an embedding model instance by name.
@@ -235,47 +295,106 @@ func (m *OpenAIModel) Complete(ctx context.Context, request model.CompletionRequ
 	}
 
 	// Convert messages to OpenAI format
-	openaiMessages := make([]openai.ChatCompletionMessageParam, 0, len(request.Messages))
+	openaiMessages := make([]openai.ChatCompletionMessageParamUnion, 0, len(request.Messages))
 	for _, msg := range request.Messages {
-		openaiMessages = append(openaiMessages, openai.ChatCompletionMessageParam{
-			Role:    openai.F(openai.ChatCompletionMessageRole(msg.Role)),
-			Content: openai.F(msg.Content),
-		})
+		var messageUnion openai.ChatCompletionMessageParamUnion
+
+		// Content is a union type - we'll use OfString for simple text content
+		contentUnion := openai.ChatCompletionUserMessageParamContentUnion{
+			OfString: param.NewOpt(msg.Content),
+		}
+
+		switch msg.Role {
+		case model.RoleSystem:
+			systemContent := openai.ChatCompletionSystemMessageParamContentUnion{
+				OfString: param.NewOpt(msg.Content),
+			}
+			messageUnion = openai.ChatCompletionMessageParamUnion{
+				OfSystem: &openai.ChatCompletionSystemMessageParam{
+					Content: systemContent,
+				},
+			}
+		case model.RoleUser:
+			messageUnion = openai.ChatCompletionMessageParamUnion{
+				OfUser: &openai.ChatCompletionUserMessageParam{
+					Content: contentUnion,
+				},
+			}
+		case model.RoleAssistant:
+			assistantContent := openai.ChatCompletionAssistantMessageParamContentUnion{
+				OfString: param.NewOpt(msg.Content),
+			}
+			messageUnion = openai.ChatCompletionMessageParamUnion{
+				OfAssistant: &openai.ChatCompletionAssistantMessageParam{
+					Content: assistantContent,
+				},
+			}
+		case model.RoleTool:
+			// Tool messages need a tool_call_id to match the original tool call
+			if msg.ToolCallID == "" {
+				// Skip tool messages without a tool call ID
+				continue
+			}
+			toolContent := openai.ChatCompletionToolMessageParamContentUnion{
+				OfString: param.NewOpt(msg.Content),
+			}
+			messageUnion = openai.ChatCompletionMessageParamUnion{
+				OfTool: &openai.ChatCompletionToolMessageParam{
+					Content:    toolContent,
+					ToolCallID: msg.ToolCallID,
+				},
+			}
+		default:
+			return model.CompletionResponse{}, fmt.Errorf("unsupported message role: %s", msg.Role)
+		}
+
+		openaiMessages = append(openaiMessages, messageUnion)
 	}
 
 	// Build the request
-	chatParams := openai.ChatCompletionCreateParams{
-		Model:    openai.F(m.modelInfo.Model),
+	chatParams := openai.ChatCompletionNewParams{
+		Model:    shared.ChatModel(m.modelInfo.Model),
 		Messages: openaiMessages,
 	}
 
 	// Set temperature from config
 	if request.Config.Temperature > 0 {
-		chatParams.Temperature = openai.F(request.Config.Temperature)
+		chatParams.Temperature = param.NewOpt(float64(request.Config.Temperature))
 	}
 
 	// Convert tools if provided
 	if len(request.Tools) > 0 {
-		openaiTools := make([]openai.ChatCompletionToolParam, 0, len(request.Tools))
+		openaiTools := make([]openai.ChatCompletionToolUnionParam, 0, len(request.Tools))
 		for _, t := range request.Tools {
 			// Convert parameters to JSON schema
 			params := t.Parameters()
 			schema := tool.ParametersToJSONSchema(params)
 
-			openaiTools = append(openaiTools, openai.ChatCompletionToolParam{
-				Type: openai.F(openai.ChatCompletionToolTypeFunction),
-				Function: openai.F(openai.FunctionDefinition{
-					Name:        openai.F(t.Name()),
-					Description: openai.F(t.Description()),
-					Parameters:  openai.F(schema),
-				}),
+			// Convert schema to map[string]any for Parameters field
+			var schemaMap map[string]any
+			if schemaBytes, err := json.Marshal(schema); err == nil {
+				json.Unmarshal(schemaBytes, &schemaMap)
+			}
+
+			// Convert schema map to the proper Parameters type
+			// FunctionParameters is typically map[string]any or a JSON schema
+			functionTool := openai.ChatCompletionFunctionToolParam{
+				Function: shared.FunctionDefinitionParam{
+					Name:        t.Name(),
+					Description: param.NewOpt(t.Description()),
+					Parameters:  schemaMap,
+				},
+			}
+
+			openaiTools = append(openaiTools, openai.ChatCompletionToolUnionParam{
+				OfFunction: &functionTool,
 			})
 		}
-		chatParams.Tools = openai.F(openaiTools)
+		chatParams.Tools = openaiTools
 	}
 
 	// Make the request
-	completion, err := m.provider.client.Chat.Completions.Create(ctx, chatParams)
+	completion, err := m.provider.client.Chat.Completions.New(ctx, chatParams)
 	if err != nil {
 		return model.CompletionResponse{}, fmt.Errorf("failed to create completion: %w", err)
 	}
@@ -286,30 +405,35 @@ func (m *OpenAIModel) Complete(ctx context.Context, request model.CompletionRequ
 	}
 
 	choice := completion.Choices[0]
+
+	// Extract text content from the message
+	// In the response, Content is a simple string
+	textContent := choice.Message.Content
+
 	genericResponse := model.CompletionResponse{
-		Text: choice.Message.Content[0].Text,
+		Text: textContent,
 		UsageStats: model.UsageStats{
-			InputTokens:  completion.Usage.PromptTokens,
-			OutputTokens: completion.Usage.CompletionTokens,
-			// OpenAI doesn't separate reasoning tokens
-			ReasoningTokens: 0,
+			InputTokens:  int(completion.Usage.PromptTokens),
+			OutputTokens: int(completion.Usage.CompletionTokens),
 		},
 	}
 
 	// Convert tool calls if present
-	if choice.Message.ToolCalls != nil && len(choice.Message.ToolCalls) > 0 {
+	if len(choice.Message.ToolCalls) > 0 {
 		toolCalls := make([]model.ToolCall, 0, len(choice.Message.ToolCalls))
 		for _, tc := range choice.Message.ToolCalls {
 			// Parse the arguments JSON
 			var args tool.Arguments
-			if tc.Function.Arguments != nil {
-				if err := json.Unmarshal([]byte(*tc.Function.Arguments), &args); err != nil {
+			if tc.Function.Arguments != "" {
+				// Arguments is a string containing JSON
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
 					return model.CompletionResponse{}, fmt.Errorf("failed to parse tool call arguments: %w", err)
 				}
 			}
 
 			toolCall := model.ToolCall{
-				Name:      *tc.Function.Name,
+				ID:        tc.ID, // Store the tool call ID from OpenAI
+				Name:      tc.Function.Name,
 				Arguments: args,
 			}
 			toolCalls = append(toolCalls, toolCall)
@@ -351,13 +475,17 @@ func (m *OpenAIEmbeddingModel) Embed(ctx context.Context, request embedding.Embe
 	}
 
 	// Create the embedding request
-	embedParams := openai.EmbeddingCreateParams{
-		Model: openai.F(m.modelInfo.Name),
-		Input: openai.F(texts),
+	// Input is a union type - use OfArrayOfStrings for multiple texts
+	inputUnion := openai.EmbeddingNewParamsInputUnion{
+		OfArrayOfStrings: texts,
+	}
+	embedParams := openai.EmbeddingNewParams{
+		Model: m.modelInfo.Name, // Model is just a string
+		Input: inputUnion,
 	}
 
 	// Make the request
-	embeddings, err := m.provider.client.Embeddings.Create(ctx, embedParams)
+	embeddings, err := m.provider.client.Embeddings.New(ctx, embedParams)
 	if err != nil {
 		return embedding.EmbeddingResponse{}, fmt.Errorf("failed to create embeddings: %w", err)
 	}
@@ -365,8 +493,13 @@ func (m *OpenAIEmbeddingModel) Embed(ctx context.Context, request embedding.Embe
 	// Convert the response to the generic format
 	resultEmbeddings := make([]embedding.Embedding, 0, len(embeddings.Data))
 	for i, data := range embeddings.Data {
+		// Convert []float64 to []float32 if needed
+		vector := make([]float32, len(data.Embedding))
+		for j, v := range data.Embedding {
+			vector[j] = float32(v)
+		}
 		resultEmbeddings = append(resultEmbeddings, embedding.Embedding{
-			Vector: data.Embedding,
+			Vector: vector,
 			Index:  i,
 		})
 	}
@@ -374,7 +507,7 @@ func (m *OpenAIEmbeddingModel) Embed(ctx context.Context, request embedding.Embe
 	return embedding.EmbeddingResponse{
 		Embeddings: resultEmbeddings,
 		UsageStats: embedding.UsageStats{
-			TokensProcessed: embeddings.Usage.PromptTokens,
+			TokensProcessed: int(embeddings.Usage.PromptTokens),
 		},
 	}, nil
 }

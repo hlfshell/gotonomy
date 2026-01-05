@@ -23,6 +23,7 @@ type PlannerAgent struct {
 }
 
 // ToolInfo represents information about a tool that can be used in plan steps.
+// TODO - this seems unneeded given tools already have this info...
 type ToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`

@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hlfshell/gotonomy/data/ledger"
-	scopedledger "github.com/hlfshell/gotonomy/data/ledger/scoped_ledger"
 )
 
 // Execution tracks the entire execution chain of all tools
@@ -20,7 +19,7 @@ type Execution struct {
 
 	// Execution-level data ledger (shared across all children)
 	data       *ledger.Ledger
-	globalData *scopedledger.ScopedLedger
+	globalData *ledger.ScopedLedger
 
 	// Mutex for thread safety
 	mu sync.RWMutex
@@ -30,11 +29,13 @@ type Execution struct {
 func NewExecution(tool Tool, args Arguments) (*Execution, *Context) {
 	data := ledger.NewLedger()
 
+	globalData, _ := ledger.NewScoped(data, "global")
+
 	e := &Execution{
 		root:       "",
 		ctxs:       make(map[ContextID]*Context),
 		data:       data,
-		globalData: scopedledger.NewScopedLedger(data, "global"),
+		globalData: globalData,
 		mu:         sync.RWMutex{},
 	}
 
@@ -43,6 +44,23 @@ func NewExecution(tool Tool, args Arguments) (*Execution, *Context) {
 	return e, root
 }
 
+// Tree returns an adjacency list mapping each context ID to the IDs of its direct children (if any).
+// Each context in the execution will have an entry in the returned map, pointing to all direct descendants.
+// Nodes with no children will have an empty slice.
+//
+// Example output (ContextID shown as simple strings for illustration):
+//
+//	{
+//	  "root":    {"child1", "child2"},
+//	  "child1":  {"grandchild1"},
+//	  "child2":  {},
+//	  "grandchild1": {},
+//	}
+//
+// In this example, "root" has two children, "child1" and "child2". "child1" has one child, "grandchild1".
+// Both "child2" and "grandchild1" have no children.
+//
+// The returned map covers all node IDs tracked by the Execution.
 func (e *Execution) Tree() map[ContextID][]ContextID {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -66,7 +84,7 @@ func (e *Execution) Data() *ledger.Ledger {
 	return e.data
 }
 
-func (e *Execution) GlobalData() *scopedledger.ScopedLedger {
+func (e *Execution) GlobalData() *ledger.ScopedLedger {
 	return e.globalData
 }
 
@@ -137,6 +155,12 @@ func (e *Execution) createChild(parentID ContextID, tool Tool, args Arguments) *
 	id := ContextID(uuid.New().String())
 	scope := fmt.Sprintf("%s:%s", tool.Name(), id)
 
+	contextData, err := ledger.NewScoped(e.data, scope)
+	if err != nil {
+		// This should not happen in normal usage, but handle it gracefully
+		return nil
+	}
+
 	child := &Context{
 		id:          id,
 		toolName:    tool.Name(),
@@ -144,8 +168,8 @@ func (e *Execution) createChild(parentID ContextID, tool Tool, args Arguments) *
 		children:    []ContextID{},
 		data:        e.data,
 		globalData:  e.globalData,
-		contextData: scopedledger.NewScopedLedger(e.data, scope),
-		scopedData:  make(map[string]*scopedledger.ScopedLedger),
+		contextData: contextData,
+		scopedData:  make(map[string]*ledger.ScopedLedger),
 		execution:   e,
 		stats:       Stats{},
 		input:       args,

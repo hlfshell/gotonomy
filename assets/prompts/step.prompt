@@ -1,0 +1,2 @@
+TODO - prompt for an AI performing a step. tell it hte overarching request and its
+role based on the step. consider that this might be a sub_plan step

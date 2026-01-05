@@ -1,0 +1,14 @@
+model: deepseek-chat
+provider: deepseek
+max_context_tokens: 32000
+description: "DeepSeek Chat is a powerful open-source language model with strong reasoning capabilities."
+costs:
+  input: 0.00000014  # $0.14 per 1M input tokens
+  output: 0.00000028 # $0.28 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: false
+accepts_file_types: []
+tags:
+  - text-only
+  - open-source
+

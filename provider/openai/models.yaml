@@ -1,0 +1,69 @@
+model: gpt-4o
+provider: openai
+max_context_tokens: 128000
+description: "GPT-4o is OpenAI's most advanced multimodal model, supporting both text and vision capabilities with improved performance and lower costs."
+costs:
+  input: 0.0000025  # $2.50 per 1M input tokens
+  output: 0.00001   # $10.00 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types:
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+tags:
+  - vision
+  - multimodal
+  - latest
+---
+model: gpt-4-turbo
+provider: openai
+max_context_tokens: 128000
+description: "GPT-4 Turbo is a high-performance multimodal model with vision capabilities and an extended context window."
+costs:
+  input: 0.00001   # $10.00 per 1M input tokens
+  output: 0.00003  # $30.00 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types:
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+tags:
+  - vision
+  - multimodal
+---
+model: gpt-4
+provider: openai
+max_context_tokens: 8192
+description: "GPT-4 is OpenAI's advanced language model with vision capabilities."
+costs:
+  input: 0.00003   # $30.00 per 1M input tokens
+  output: 0.00006  # $60.00 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types:
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+tags:
+  - vision
+  - multimodal
+---
+model: gpt-3.5-turbo
+provider: openai
+max_context_tokens: 16384
+description: "GPT-3.5 Turbo is a fast and efficient text-only model, ideal for most language tasks."
+costs:
+  input: 0.0000005  # $0.50 per 1M input tokens
+  output: 0.0000015 # $1.50 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types: []
+tags:
+  - text-only
+  - fast
+

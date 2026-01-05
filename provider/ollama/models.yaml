@@ -1,0 +1,15 @@
+model: llama2
+provider: ollama
+max_context_tokens: 4096
+description: "Llama 2 is Meta's open-source language model, available via Ollama."
+costs:
+  input: 0.0
+  output: 0.0
+  reasoning: 0.0
+can_use_tools: false
+accepts_file_types: []
+tags:
+  - text-only
+  - open-source
+  - local
+

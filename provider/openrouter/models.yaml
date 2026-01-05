@@ -1,0 +1,14 @@
+model: meta-llama/llama-3-70b-instruct
+provider: openrouter
+max_context_tokens: 8192
+description: "Meta Llama 3 70B via OpenRouter - a powerful open-source model."
+costs:
+  input: 0.0000002   # $0.20 per 1M input tokens
+  output: 0.0000002   # $0.20 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: false
+accepts_file_types: []
+tags:
+  - text-only
+  - open-source
+

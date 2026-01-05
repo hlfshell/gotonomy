@@ -11,13 +11,13 @@ type Parameter struct {
 	description    string
 	value_type     reflect.Type
 	required       bool
-	defaultValue   interface{}
-	stringFunction func(value interface{}) (string, error)
+	defaultValue   any
+	stringFunction func(value any) (string, error)
 }
 
 // String returns a human-readable string for the given value using the parameter's
 // stringFunction if provided. Falls back to fmt.Sprintf("%v", value) otherwise.
-func (p *Parameter) String(value interface{}) (string, error) {
+func (p *Parameter) String(value any) (string, error) {
 	if p.stringFunction == nil {
 		return fmt.Sprintf("%v", value), nil
 	}
@@ -40,12 +40,12 @@ func (p *Parameter) Type() reflect.Type {
 }
 
 // Default returns the default value for the parameter.
-func (p *Parameter) Default() interface{} {
+func (p *Parameter) Default() any {
 	return p.defaultValue
 }
 
 // NewParameter creates a type-friendly Argument using generics.
-// The Argument struct itself remains untyped (using interface{}),
+// The Argument struct itself remains untyped (using any),
 // but this function allows type-safe creation with compile-time type checking.
 //
 // Example:
@@ -77,7 +77,7 @@ func NewParameter[T any](
 		value_type:   Type[T](),
 		required:     required,
 		defaultValue: defaultValue,
-		stringFunction: func(value interface{}) (string, error) {
+		stringFunction: func(value any) (string, error) {
 			// Strict type assertion - fail clearly if type doesn't match
 			v, ok := value.(T)
 			if !ok {
@@ -96,7 +96,7 @@ func (a *Parameter) Required() bool {
 
 // TypeCheck validates that the value matches the parameter's type.
 // Returns nil if valid, or an error if the type doesn't match.
-func (a *Parameter) TypeCheck(value interface{}) error {
+func (a *Parameter) TypeCheck(value any) error {
 	if a.Type() == nil {
 		return errors.New("parameter type is nil")
 	}
@@ -122,7 +122,7 @@ func (a *Parameter) TypeCheck(value interface{}) error {
 // - If value is nil and a non-nil default exists, the default is used.
 // - If after defaulting the value is nil and the parameter is required, an error is returned.
 // - A required parameter with a non-nil default is considered satisfied after defaults are applied.
-func (a *Parameter) Value(value interface{}) (interface{}, error) {
+func (a *Parameter) Value(value any) (any, error) {
 	if value == nil && a.Default() != nil {
 		value = a.Default()
 	}

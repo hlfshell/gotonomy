@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/hlfshell/gotonomy/data/ledger"
-	scopedledger "github.com/hlfshell/gotonomy/data/ledger/scoped_ledger"
+	"github.com/hlfshell/gotonomy/utils/semver"
 )
 
 // mockTool is a simple tool implementation for testing
@@ -15,12 +15,20 @@ type mockTool struct {
 	params      []Parameter
 }
 
+func (m *mockTool) ID() string {
+	return m.name
+}
+
 func (m *mockTool) Name() string {
 	return m.name
 }
 
 func (m *mockTool) Description() string {
 	return m.description
+}
+
+func (m *mockTool) Version() semver.SemVer {
+	return semver.SemVer{}
 }
 
 func (m *mockTool) Parameters() []Parameter {
@@ -81,7 +89,6 @@ func TestNewExecution(t *testing.T) {
 	if node.contextData == nil {
 		t.Fatal("Node contextData should not be nil")
 	}
-
 
 	// Stats should be initialized (check that we can access it)
 	stats := node.Stats()
@@ -166,7 +173,7 @@ func TestPrepareContext_ErrorCases(t *testing.T) {
 	// Test: invalid parent ID for existing execution (createChild returns nil)
 	childTool := newMockTool("child-tool")
 	invalidParent := &Context{
-		id:       ContextID("nonexistent"),
+		id:        ContextID("nonexistent"),
 		execution: root.execution,
 	}
 	child := PrepareContext(invalidParent, childTool, Arguments{})
@@ -180,13 +187,16 @@ func TestPrepareContext_BlankContext(t *testing.T) {
 	// Test: blank context gets filled
 	data := ledger.NewLedger()
 	blankExec := &Execution{
-		data:       data,
-		globalData: scopedledger.NewScopedLedger(data, "global"),
-		ctxs:       make(map[ContextID]*Context),
+		data: data,
+		globalData: func() *ledger.ScopedLedger {
+			sl, _ := ledger.NewScoped(data, "global")
+			return sl
+		}(),
+		ctxs: make(map[ContextID]*Context),
 	}
 	blankCtx := blankContext(blankExec)
 	rootTool := newMockTool("root-tool")
-	
+
 	ctx := PrepareContext(blankCtx, rootTool, Arguments{})
 	if ctx == nil {
 		t.Fatal("Context should not be nil")

@@ -453,88 +453,168 @@ func TestJSONParser_Parse_InvalidJSON(t *testing.T) {
 	}
 }
 
-// Test YAMLParser
+// Test JSONTypedParser
 
-func TestYAMLParser_Parse(t *testing.T) {
-	parser := NewYAMLParser()
+func TestNewJSONTypedParser(t *testing.T) {
+	parser := NewJSONTypedParser[Person]()
+	if parser == nil {
+		t.Fatal("parser is nil")
+	}
+}
 
-	input := `
-name: John
-age: 30
-email: john@example.com
-`
+func TestJSONTypedParser_Parse_Success(t *testing.T) {
+	parser := NewJSONTypedParser[Person]()
+
+	input := `{"name": "John Doe", "age": 30, "email": "john@example.com"}`
 	result, err := parser.Parse(input)
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
 
-	if result["name"] != "John" {
-		t.Errorf("Expected name 'John', got '%v'", result["name"])
+	if result.Name != "John Doe" {
+		t.Errorf("Expected name 'John Doe', got '%s'", result.Name)
 	}
-	if result["age"] != 30 {
-		t.Errorf("Expected age 30, got %v", result["age"])
+	if result.Age != 30 {
+		t.Errorf("Expected age 30, got %d", result.Age)
+	}
+	if result.Email != "john@example.com" {
+		t.Errorf("Expected email 'john@example.com', got '%s'", result.Email)
 	}
 }
 
-func TestYAMLParser_Parse_InvalidYAML(t *testing.T) {
-	parser := NewYAMLParser()
+func TestJSONTypedParser_Parse_WithTask(t *testing.T) {
+	parser := NewJSONTypedParser[Task]()
 
-	input := `invalid: yaml: : : :`
+	input := `{"name": "Test Task", "status": "Complete", "result": "Success"}`
+	result, err := parser.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.Name != "Test Task" {
+		t.Errorf("Expected name 'Test Task', got '%s'", result.Name)
+	}
+	if result.Status != "Complete" {
+		t.Errorf("Expected status 'Complete', got '%s'", result.Status)
+	}
+	if result.Result != "Success" {
+		t.Errorf("Expected result 'Success', got '%s'", result.Result)
+	}
+}
+
+func TestJSONTypedParser_Parse_InvalidJSON(t *testing.T) {
+	parser := NewJSONTypedParser[Person]()
+
+	input := `{invalid json}`
 	_, err := parser.Parse(input)
 	if err == nil {
-		t.Fatal("Expected error for invalid YAML, got nil")
+		t.Fatal("Expected error for invalid JSON, got nil")
 	}
 }
 
-// Test edge cases
+func TestJSONTypedParser_Parse_EmptyJSON(t *testing.T) {
+	parser := NewJSONTypedParser[Person]()
 
-func TestStructuredLabelsParser_Parse_EmptyInput(t *testing.T) {
-	labels := []structuredparse.Label{
-		{Name: "name", Required: true},
-	}
-
-	convertFunc := func(m map[string]interface{}) (Person, error) {
-		p := Person{}
-		if name, ok := m["name"].(string); ok {
-			p.Name = name
-		}
-		return p, nil
-	}
-
-	parser, err := NewStructuredParse(labels, convertFunc)
+	input := `{}`
+	result, err := parser.Parse(input)
 	if err != nil {
-		t.Fatalf("NewStructuredParse failed: %v", err)
+		t.Fatalf("Parse failed: %v", err)
 	}
 
-	_, err = parser.Parse("")
-	// Should either return empty result or error
-	if err == nil {
-		// Empty input might be valid, check if result is zero value
+	// Should return zero value Person
+	if result.Name != "" {
+		t.Errorf("Expected empty name, got '%s'", result.Name)
+	}
+	if result.Age != 0 {
+		t.Errorf("Expected age 0, got %d", result.Age)
 	}
 }
 
-func TestStructuredLabelBlocksParser_Parse_EmptyInput(t *testing.T) {
-	labels := []structuredparse.Label{
-		{Name: "Task", IsBlockStart: true, Required: true},
-	}
+func TestJSONTypedParser_Parse_PartialFields(t *testing.T) {
+	parser := NewJSONTypedParser[Person]()
 
-	convertFunc := func(m map[string]interface{}) (Task, error) {
-		task := Task{}
-		if name, ok := m["Task"].(string); ok {
-			task.Name = name
-		}
-		return task, nil
-	}
-
-	parser, err := NewStructuredParseBlocks[[]Task, Task](labels, convertFunc)
+	input := `{"name": "Jane Doe"}`
+	result, err := parser.Parse(input)
 	if err != nil {
-		t.Fatalf("NewStructuredParseBlocks failed: %v", err)
+		t.Fatalf("Parse failed: %v", err)
 	}
 
-	result, err := parser.Parse("")
-	// Should return empty slice
-	if len(result) != 0 {
-		t.Errorf("Expected empty slice for empty input, got %d items", len(result))
+	if result.Name != "Jane Doe" {
+		t.Errorf("Expected name 'Jane Doe', got '%s'", result.Name)
+	}
+	if result.Age != 0 {
+		t.Errorf("Expected age 0, got %d", result.Age)
+	}
+	if result.Email != "" {
+		t.Errorf("Expected empty email, got '%s'", result.Email)
 	}
 }
 
+func TestJSONTypedParser_ImplementsParserInterface(t *testing.T) {
+	parser := NewJSONTypedParser[Person]()
+
+	// Test that it implements Parser[Person]
+	var _ Parser[Person] = parser
+
+	input := `{"name": "Test", "age": 25, "email": "test@example.com"}`
+	result, err := parser.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.Name != "Test" {
+		t.Errorf("Expected name 'Test', got '%s'", result.Name)
+	}
+}
+
+func TestJSONTypedParser_Parse_WithSlice(t *testing.T) {
+	parser := NewJSONTypedParser[[]Task]()
+
+	input := `[{"name": "Task 1", "status": "Complete", "result": "Success"}, {"name": "Task 2", "status": "In Progress", "result": "Pending"}]`
+	result, err := parser.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 tasks, got %d", len(result))
+	}
+
+	if result[0].Name != "Task 1" {
+		t.Errorf("Expected first task name 'Task 1', got '%s'", result[0].Name)
+	}
+	if result[1].Name != "Task 2" {
+		t.Errorf("Expected second task name 'Task 2', got '%s'", result[1].Name)
+	}
+}
+
+func TestJSONTypedParser_Parse_WithNestedStructure(t *testing.T) {
+	type Address struct {
+		Street string `json:"street"`
+		City   string `json:"city"`
+		Zip    string `json:"zip"`
+	}
+	type PersonWithAddress struct {
+		Name    string  `json:"name"`
+		Age     int     `json:"age"`
+		Address Address `json:"address"`
+	}
+
+	parser := NewJSONTypedParser[PersonWithAddress]()
+
+	input := `{"name": "John", "age": 30, "address": {"street": "123 Main St", "city": "Springfield", "zip": "12345"}}`
+	result, err := parser.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if result.Name != "John" {
+		t.Errorf("Expected name 'John', got '%s'", result.Name)
+	}
+	if result.Address.Street != "123 Main St" {
+		t.Errorf("Expected street '123 Main St', got '%s'", result.Address.Street)
+	}
+	if result.Address.City != "Springfield" {
+		t.Errorf("Expected city 'Springfield', got '%s'", result.Address.City)
+	}
+}

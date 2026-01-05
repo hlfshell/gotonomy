@@ -136,13 +136,13 @@ func TestRevisionDiff(t *testing.T) {
 	step2 := NewStep("s2", "Step 2", "Do 2", "Expect 2", nil, nil)
 	v2.AddStep(step1Modified)
 	v2.AddStep(step2)
-	
+
 	// Create a diff tracking the change from v1 to v2
 	diff := NewPlanDiff("diff-id", v1, v2, "Updated step 1 and added step 2")
-	
+
 	// Attach the diff to the revision
 	v2.RevisionDiff = &diff
-	
+
 	if v2.RevisionDiff == nil {
 		t.Fatal("Revision should have a diff")
 	}
@@ -158,7 +158,7 @@ func TestRevisionDiff(t *testing.T) {
 	if len(v2.RevisionDiff.Steps.Changed) != 1 {
 		t.Error("Revision diff should show 1 changed step")
 	}
-	
+
 	// Test that a plan without RevisionDiff has no previous plan
 	originalPlan := NewPlan("original")
 	if originalPlan.RevisionDiff != nil {
@@ -177,7 +177,7 @@ func TestGetAllStepsRecursive(t *testing.T) {
 	plan.AddStep(step1)
 	plan.AddStep(step2)
 
-	allSteps := plan.GetAllStepsRecursive()
+	allSteps := plan.GetAllSteps()
 	if len(allSteps) != 3 {
 		t.Errorf("Expected 3 steps total, got %d", len(allSteps))
 	}

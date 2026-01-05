@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"time"
 
 	"github.com/hlfshell/gotonomy/model"
 	"github.com/hlfshell/gotonomy/tool"
+	"github.com/hlfshell/gotonomy/utils/semver"
 )
 
 const SessionKey = "session"
@@ -16,15 +19,49 @@ const SessionKey = "session"
 // a set of model messages for the next LLM call.
 type PrepareInput func(args tool.Arguments, sess *Session) ([]model.Message, error)
 
-// ResponseParser parses the final LLM text output into a typed value and
-// optional warnings.
-type ResponseParser func(output string) (any, []string)
+// ResponseParser parses the final LLM text output into a typed value or
+// returns an error if parsing fails.
+type ResponseParser func(output string) (any, error)
+
+const (
+	StopOnFirstToolError string = "stop_on_first_error"
+	PassErrorsToModel    string = "pass_errors_to_model"
+	FunctionOnError      string = "function_on_error"
+)
+
+type AgentConfig struct {
+	MaxSteps          int           `json:"max_iterations"`   // if 0, no max iterations
+	Timeout           time.Duration `json:"timeout"`          // if 0, no timeout
+	MaxToolWorkers    int           `json:"max_tool_workers"` // if 0, no max tool workers
+	ToolErrorHandling string        `json:"error_handling"`   // one of StopOnFirstToolError, PassErrorsToModel, FunctionOnError
+	// If ToolErrorHandling is FunctionOnError, this function is called to handle the error
+	// The function accepts the tool.ResultInterface and returns either a  new tool.ResultInterface
+	// or an error to stringify and pass to the model for the tool's failure. Note that the ResultInterface
+	// can optionally still contain the error, allowing default parsing to handle it.
+	OnToolErrorFunction func(tool.ResultInterface) (tool.ResultInterface, error) `json:"on_error_function"`
+}
+
+// IterationChecker returns a function that is called to check if the agent should continue or
+// halt based on its settings. The function returns an error if the agent should stop, nil if it should continue.
+func (c *AgentConfig) IterationChecker() func(session *Session) error {
+	return func(session *Session) error {
+		if c.MaxSteps > 0 && len(session.Steps()) >= c.MaxSteps {
+			return fmt.Errorf("exceeded max steps of %d", c.MaxSteps)
+		}
+		if c.Timeout > 0 && session.Duration() > c.Timeout {
+			return fmt.Errorf("exceeded timeout of %s", c.Timeout)
+		}
+		return nil
+	}
+}
 
 // Agent is a simple expandable type of tool that utilizes an LLM
 // to accomplish a task. It implements tool.Tool directly so it can be
 // called as a child tool from other agents.
 type Agent struct {
-	// name is the name of the agent. When used as a tool, this must be globally unique.
+	// id is the globally unique identifier of the agent (e.g., "hlfshell/my_agent")
+	id string
+	// name is the human-readable name of the agent (can have overlaps)
 	name string
 	// description is a human readable description of the agent.
 	description string
@@ -40,56 +77,12 @@ type Agent struct {
 	// parseResponse parses the final assistant text into a typed result.
 	parseResponse ResponseParser
 
-	// maxIterations is the maximum number of LLM/tool iterations before failing.
-	maxIterations int
-}
+	// extractResult inspects the full Session and decides whether the agent
+	// should stop iterating, optionally returning a typed result and feedback
+	// messages to feed into the next iteration.
+	extractResult ExtractResult
 
-// AgentOption is a functional option for configuring an Agent.
-type AgentOption func(*Agent)
-
-// DefaultArgumentsToPrompt marshals the entire arguments map to a single JSON string
-// under the "input" key. This produces nested JSON when later embedded in prompts.
-// If you want per-field templating, provide a custom ArgumentsToMessagesFunc.
-func DefaultArgumentsToPrompt(args tool.Arguments) (map[string]string, error) {
-	data, err := json.Marshal(args)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal arguments: %w", err)
-	}
-	return map[string]string{
-		"input": string(data),
-	}, nil
-}
-
-// DefaultArgumentsToMessages builds a simple single-turn conversation:
-//   - If the session has prior steps, it replays the full conversation history.
-//   - For the first iteration, it converts args into a single user message whose
-//     content is the JSON-encoded "input" field from DefaultArgumentsToPrompt.
-func DefaultArgumentsToMessages(args tool.Arguments, sess *Session) ([]model.Message, error) {
-	if sess != nil && len(sess.Steps()) > 0 {
-		return sess.Conversation(), nil
-	}
-
-	// No prior steps - start a new conversation from arguments.
-	inputMap, err := DefaultArgumentsToPrompt(args)
-	if err != nil {
-		return nil, fmt.Errorf("building prompt from args: %w", err)
-	}
-	input, ok := inputMap["input"]
-	if !ok {
-		return nil, fmt.Errorf("default prompt missing input field")
-	}
-
-	return []model.Message{
-		{
-			Role:    model.RoleUser,
-			Content: input,
-		},
-	}, nil
-}
-
-// DefaultResponseParser returns the raw text output unchanged.
-func DefaultResponseParser(output string) (any, []string) {
-	return output, nil
+	config AgentConfig
 }
 
 // NewAgent creates a new agent with the given name, description, and model.
@@ -120,7 +113,12 @@ func NewAgent(
 		),
 	}
 
+	// Generate a globally unique ID from the name if not provided
+	// Use a default prefix to ensure uniqueness
+	agentID := fmt.Sprintf("agent/%s", name)
+
 	a := &Agent{
+		id:            agentID,
 		name:          name,
 		description:   description,
 		parameters:    defaultParams,
@@ -128,7 +126,8 @@ func NewAgent(
 		tools:         make(map[string]tool.Tool),
 		prepareInput:  DefaultArgumentsToMessages,
 		parseResponse: DefaultResponseParser,
-		maxIterations: 16,
+		extractResult: nil,
+		config:        DefaultAgentConfig,
 	}
 
 	// Apply all options
@@ -136,82 +135,28 @@ func NewAgent(
 		opt(a)
 	}
 
+	// If no custom extractor was provided, derive a default one from the
+	// configured parser. This keeps the developer API simple: providing a
+	// ResponseParser is enough to get structured results.
+	if a.extractResult == nil {
+		a.extractResult = ExtractorFromParser(a.parseResponse, false)
+	}
+
 	return a
 }
 
-// WithPrompt is currently a no-op placeholder for future prompt templating.
-// It exists to avoid breaking API, but does not alter behavior yet.
-// Future versions will wire this into a prompt template system.
-func WithPrompt(prompt string) AgentOption {
-	return func(a *Agent) {
-		// intentionally no-op
-		_ = prompt
-	}
+func (a *Agent) ID() string {
+	return a.id
 }
 
-// WithArgumentsToMessages sets a custom arguments-to-messages function for the agent.
-func WithArgumentsToMessages(fn PrepareInput) AgentOption {
-	return func(a *Agent) {
-		if fn != nil {
-			a.prepareInput = fn
-		}
-	}
+func (a *Agent) Version() semver.SemVer {
+	return semver.SemVer{} // Default version for agents
 }
 
-// WithParser sets a custom output parser for the agent.
-// The parser extracts structured data from the agent's final text output.
-func WithParser(parser ResponseParser) AgentOption {
-	return func(a *Agent) {
-		if parser != nil {
-			a.parseResponse = parser
-		}
-	}
-}
-
-// WithParameters sets the parameters for the agent.
-func WithParameters(parameters []tool.Parameter) AgentOption {
-	return func(a *Agent) {
-		a.parameters = parameters
-	}
-}
-
-// WithTool adds a tool to the agent.
-func WithTool(t tool.Tool) AgentOption {
-	return func(a *Agent) {
-		if a.tools == nil {
-			a.tools = make(map[string]tool.Tool)
-		}
-		a.tools[t.Name()] = t
-	}
-}
-
-// WithTools adds multiple tools to the agent.
-func WithTools(tools []tool.Tool) AgentOption {
-	return func(a *Agent) {
-		if a.tools == nil {
-			a.tools = make(map[string]tool.Tool)
-		}
-		for _, t := range tools {
-			a.tools[t.Name()] = t
-		}
-	}
-}
-
-// WithMaxIterations overrides the default maximum number of reasoning iterations.
-func WithMaxIterations(n int) AgentOption {
-	return func(a *Agent) {
-		if n > 0 {
-			a.maxIterations = n
-		}
-	}
-}
-
-// Name returns the name of the agent. When used as a tool, this serves as the unique identifier.
 func (a *Agent) Name() string {
 	return a.name
 }
 
-// Description returns a description of the agent.
 func (a *Agent) Description() string {
 	return a.description
 }
@@ -230,7 +175,7 @@ func (a *Agent) Parameters() []tool.Parameter {
 //
 // The execution loop:
 //  1. Prepare a tool.Context and mark stats started/finished.
-//  2. Load or create a Session from the global ledger.
+//  2. Load or create a Session from the context-scoped ledger.
 //  3. Repeatedly build messages, call the model, handle tool calls, and
 //     either continue or return the final parsed result.
 func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInterface {
@@ -240,27 +185,47 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 	defer ctx.Stats().MarkFinished()
 
 	// 2) Start our session for internal agent looping
-	session := NewSession()
+	// Try to load existing session from context, or create new one
+	sessionLedger := ctx.Data()
+	session := NewSession(sessionLedger)
 	// When this function leaves, we save the current
 	// state of the session to our context's scoped
 	// data ledger.
+	// TODO - this was done due to the ledger interface on
+	// the context, but since that's changing, this odd
+	// code smell can be reworked to just write it outright
 	defer ctx.Data().SetData(SessionKey, session)
 
-	//todo - if no max iterations, go infinite
-	// todo - add timeout
-	maxIterations := a.maxIterations
-	if maxIterations <= 0 {
-		maxIterations = 16
-	}
+	// 3) Get the iteration checker from config
+	shouldContinue := a.config.IterationChecker()
 
-	for iter := 0; iter < maxIterations; iter++ {
+	// Main iteration loop - continues until checker returns false
+	iteration := 0
+	for {
+		iteration++
+		// Check if we should continue before starting this iteration
+		if err := shouldContinue(session); err != nil {
+			fmt.Printf("[AGENT DEBUG] Stopping due to iteration checker: %v\n", err)
+			return tool.NewError(err)
+		}
+
 		//todo - no magic strings, consts for names
 		ctx.Stats().Incr("iterations")
+		fmt.Printf("\n[AGENT DEBUG] ===== Iteration %d =====\n", iteration)
 
 		// 1) Build messages from args + session.
-		messages, err := a.prepareInput(args, sess)
+		messages, err := a.prepareInput(args, session)
 		if err != nil {
+			fmt.Printf("[AGENT DEBUG] Error building messages: %v\n", err)
 			return tool.NewError(fmt.Errorf("building messages: %w", err))
+		}
+		fmt.Printf("[AGENT DEBUG] Prepared %d messages for model\n", len(messages))
+		for i, msg := range messages {
+			fmt.Printf("[AGENT DEBUG]   Message[%d]: %s: %q\n", i, msg.Role, truncateString(msg.Content, 150))
+		}
+		fmt.Printf("[AGENT DEBUG] Available tools: %d\n", len(a.toolsSlice()))
+		for _, t := range a.toolsSlice() {
+			fmt.Printf("[AGENT DEBUG]   - %s: %s\n", t.Name(), truncateString(t.Description(), 60))
 		}
 
 		// 2) Create Step.
@@ -268,6 +233,21 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 
 		// 3) Call model.
 		//TODO - use tool contexts, not golang contexts!
+		fmt.Printf("[AGENT DEBUG] Calling model...\n")
+
+		// Write outgoing messages to debug file
+		debugFilename := fmt.Sprintf("debug_iteration_%d_%s.json", iteration, time.Now().Format("150405"))
+		debugData := map[string]interface{}{
+			"iteration":         iteration,
+			"timestamp":         time.Now().Format(time.RFC3339),
+			"outgoing_messages": messages,
+			"tools_count":       len(a.toolsSlice()),
+		}
+		if debugJSON, err := json.MarshalIndent(debugData, "", "  "); err == nil {
+			os.WriteFile(debugFilename, debugJSON, 0644)
+			fmt.Printf("[AGENT DEBUG] Outgoing messages written to: %s\n", debugFilename)
+		}
+
 		resp, err := a.model.Complete(context.Background(), model.CompletionRequest{
 			Messages: messages,
 			Tools:    a.toolsSlice(),
@@ -275,6 +255,7 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 		})
 
 		if err != nil {
+			fmt.Printf("[AGENT DEBUG] Model call error: %v\n", err)
 			// Record error in session and return an error result.
 			step.SetResponse(Response{
 				Output: model.Message{
@@ -288,47 +269,108 @@ func (a *Agent) Execute(ctx *tool.Context, args tool.Arguments) tool.ResultInter
 			return tool.NewError(err)
 		}
 
+		fmt.Printf("[AGENT DEBUG] Model response received:\n")
+		fmt.Printf("[AGENT DEBUG]   Text: %q\n", truncateString(resp.Text, 200))
+		fmt.Printf("[AGENT DEBUG]   Tool calls: %d\n", len(resp.ToolCalls))
+		for i, tc := range resp.ToolCalls {
+			fmt.Printf("[AGENT DEBUG]     [%d] %s(%v)\n", i, tc.Name, tc.Arguments)
+		}
+		fmt.Printf("[AGENT DEBUG]   Usage: %d input, %d output tokens\n", resp.UsageStats.InputTokens, resp.UsageStats.OutputTokens)
+
+		// Write raw response to debug file
+		responseDebugData := map[string]interface{}{
+			"iteration": iteration,
+			"timestamp": time.Now().Format(time.RFC3339),
+			"response": map[string]interface{}{
+				"text":       resp.Text,
+				"tool_calls": resp.ToolCalls,
+				"usage": map[string]interface{}{
+					"input_tokens":  resp.UsageStats.InputTokens,
+					"output_tokens": resp.UsageStats.OutputTokens,
+				},
+			},
+		}
+		if responseDebugJSON, err := json.MarshalIndent(responseDebugData, "", "  "); err == nil {
+			responseDebugFilename := fmt.Sprintf("debug_response_%d_%s.json", iteration, time.Now().Format("150405"))
+			os.WriteFile(responseDebugFilename, responseDebugJSON, 0644)
+			fmt.Printf("[AGENT DEBUG] Raw response written to: %s\n", responseDebugFilename)
+		}
+
 		// 4) Attach response to step & session.
 		step.SetResponse(ResponseFromModel(resp))
 		session.AddStep(step)
 
-		// Track tool calls at the agent level.
+		// Track tool calls via ctx metrics.
 		if len(resp.ToolCalls) > 0 {
 			//TODO - no magic strings
 			ctx.Stats().Add("tool_calls", int64(len(resp.ToolCalls)))
-		}
-
-		// 5) If response has tool calls, handle them then continue loop.
-		if len(resp.ToolCalls) > 0 {
-			//TODO - some tool clals should be able to fail
-			// and the LLM should be able to handle it - BUT
-			// also the agent should have a setting for if this
-			// is the case
+			fmt.Printf("[AGENT DEBUG] Executing %d tool calls...\n", len(resp.ToolCalls))
+			// Execute tools before making any extraction decisions.
+			// Some extractors may depend on tool outputs being present
+			// in the session's conversation.
 			if err := a.handleToolCalls(ctx, session, step); err != nil {
+				fmt.Printf("[AGENT DEBUG] Tool execution error: %v\n", err)
 				return tool.NewError(err)
 			}
-			// After tool calls, continue loop to let model reason again.
+			fmt.Printf("[AGENT DEBUG] Tool calls completed\n")
+		}
+
+		fmt.Printf("[AGENT DEBUG] Calling extractResult...\n")
+		decision := a.extractResult(a, ctx, session)
+		fmt.Printf("[AGENT DEBUG] ExtractDecision:\n")
+		fmt.Printf("[AGENT DEBUG]   Done: %v\n", decision.Done)
+		fmt.Printf("[AGENT DEBUG]   Result: %v (type: %T)\n", decision.Result, decision.Result)
+		fmt.Printf("[AGENT DEBUG]   Warnings: %v\n", decision.Warnings)
+		fmt.Printf("[AGENT DEBUG]   Feedback messages: %d\n", len(decision.Feedback))
+		if decision.Err != nil {
+			fmt.Printf("[AGENT DEBUG]   Error: %v\n", decision.Err)
+			return tool.NewError(decision.Err)
+		}
+
+		// Append any feedback messages so they are included in the next
+		// iteration's step.
+		for _, msg := range decision.Feedback {
+			session.AppendToolMessage(msg)
+		}
+
+		if !decision.Done {
+			fmt.Printf("[AGENT DEBUG] Not done, continuing to next iteration...\n")
+			// Continue iterating; extractor has not reached a terminal state.
 			continue
 		}
 
-		// 6) No tool calls: finalize / parse and return.
-		// TODO - agents should have a termination strategy
-		// which is checked prior to aborting which passes
-		// in the entire session
-		finalText := resp.Text
-		if a.parseResponse == nil {
-			return tool.NewOK(finalText)
+		fmt.Printf("[AGENT DEBUG] Terminal state reached!\n")
+		// Terminal state reached - determine the final result to return.
+		result := decision.Result
+		if result == nil {
+			fmt.Printf("[AGENT DEBUG] Result is nil, falling back to last assistant message\n")
+			// Fall back to the last assistant message text.
+			last := session.LastStep()
+			if last != nil {
+				result = last.GetResponse().Output.Content
+				fmt.Printf("[AGENT DEBUG] Fallback result: %q\n", result)
+			} else {
+				fmt.Printf("[AGENT DEBUG] No last step available for fallback\n")
+			}
+		} else {
+			fmt.Printf("[AGENT DEBUG] Using decision result: %v\n", result)
 		}
 
-		parsed, warnings := a.parseResponse(finalText)
-		if len(warnings) > 0 {
-			ctx.Stats().Set("agent_parse_warnings", warnings)
+		if len(decision.Warnings) > 0 {
+			ctx.Stats().Set("agent_extract_warnings", decision.Warnings)
 		}
-		return tool.NewOK(parsed)
+
+		fmt.Printf("[AGENT DEBUG] Returning final result: %v (type: %T)\n", result, result)
+		return tool.NewOK(result)
 	}
+}
 
-	// If we exit the loop: too many iterations TODO or timeout
-	return tool.NewError(fmt.Errorf("agent %s exceeded max iterations", a.name))
+// truncateString truncates a string for debug output
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // toolsSlice returns the agent's tools in a deterministic (sorted-by-name) slice.
@@ -351,43 +393,6 @@ func (a *Agent) toolsSlice() []tool.Tool {
 		result = append(result, a.tools[name])
 	}
 	return result
-}
-
-// handleToolCalls executes tool calls requested by the model using the provided
-// parent context. Tool results are optionally appended to the Session as tool
-// messages so they can be fed back into subsequent LLM calls.
-// TODO - changeable "on error" behavior AND optional parallelization
-func (a *Agent) handleToolCalls(parentCtx *tool.Context, sess *Session, step *Step) error {
-	for _, call := range step.GetResponse().ToolCalls {
-		toolName := call.Name
-		t, ok := a.tools[toolName]
-		if !ok {
-			return fmt.Errorf("unknown tool: %s", toolName)
-		}
-
-		// Arguments are already in tool.Arguments form.
-		args := call.Arguments
-
-		// Delegate to the tool system; the child tool will get its own Context
-		// via PrepareContext inside its Execute implementation.
-		res := t.Execute(parentCtx, args)
-
-		// Convert result into a tool message for the conversation.
-		content, err := res.String()
-		if err != nil {
-			content = fmt.Sprintf("tool %s error: %v", toolName, err)
-		}
-
-		toolMsg := model.Message{
-			Role:    model.RoleTool,
-			Content: content,
-		}
-
-		// Attach tool message to the current session so it can be replayed on
-		// the next LLM call.
-		sess.AppendToolMessage(toolMsg)
-	}
-	return nil
 }
 
 // ResponseFromModel converts a model.CompletionResponse into an agent Response.

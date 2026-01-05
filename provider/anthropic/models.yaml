@@ -1,0 +1,58 @@
+model: claude-3-opus-20240229
+provider: anthropic
+max_context_tokens: 200000
+description: "Claude 3 Opus is Anthropic's most powerful model with advanced reasoning and vision capabilities."
+costs:
+  input: 0.000015   # $15.00 per 1M input tokens
+  output: 0.000075   # $75.00 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types:
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+tags:
+  - vision
+  - multimodal
+  - powerful
+---
+model: claude-3-sonnet-20240229
+provider: anthropic
+max_context_tokens: 200000
+description: "Claude 3 Sonnet balances performance and cost with strong reasoning and vision capabilities."
+costs:
+  input: 0.000003   # $3.00 per 1M input tokens
+  output: 0.000015  # $15.00 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types:
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+tags:
+  - vision
+  - multimodal
+  - balanced
+---
+model: claude-3-haiku-20240307
+provider: anthropic
+max_context_tokens: 200000
+description: "Claude 3 Haiku is Anthropic's fastest and most affordable model with vision capabilities."
+costs:
+  input: 0.00000025  # $0.25 per 1M input tokens
+  output: 0.00000125 # $1.25 per 1M output tokens
+  reasoning: 0.0
+can_use_tools: true
+accepts_file_types:
+  - image/jpeg
+  - image/png
+  - image/gif
+  - image/webp
+tags:
+  - vision
+  - multimodal
+  - fast
+  - affordable
+

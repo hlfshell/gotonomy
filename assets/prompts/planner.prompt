@@ -177,7 +177,7 @@ Common best practice:
 
 ---
 
-### **6. `"sub_plan"`: WHEN AND HOW TO USE**
+### **6. `sub_plan`: WHEN AND HOW TO USE**
 
 A sub-plan is OPTIONAL and should be used SPARINGLY.
 

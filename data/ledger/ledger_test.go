@@ -490,9 +490,13 @@ func TestLedger_GetKeys(t *testing.T) {
 	}
 
 	// Verify scope1 keys
-	scope1Keys, ok := keys["scope1"]
+	scope1KeysRaw, ok := keys["scope1"]
 	if !ok {
 		t.Fatal("Expected scope1 to be present")
+	}
+	scope1Keys, ok := scope1KeysRaw.([]string)
+	if !ok {
+		t.Fatalf("Expected scope1 keys to be []string, got %T", scope1KeysRaw)
 	}
 	if len(scope1Keys) != 2 {
 		t.Errorf("Expected 2 keys for scope1, got %d", len(scope1Keys))
@@ -509,9 +513,13 @@ func TestLedger_GetKeys(t *testing.T) {
 	}
 
 	// Verify scope2 keys
-	scope2Keys, ok := keys["scope2"]
+	scope2KeysRaw, ok := keys["scope2"]
 	if !ok {
 		t.Fatal("Expected scope2 to be present")
+	}
+	scope2Keys, ok := scope2KeysRaw.([]string)
+	if !ok {
+		t.Fatalf("Expected scope2 keys to be []string, got %T", scope2KeysRaw)
 	}
 	if len(scope2Keys) != 3 {
 		t.Errorf("Expected 3 keys for scope2, got %d", len(scope2Keys))
@@ -537,9 +545,13 @@ func TestLedger_GetKeys(t *testing.T) {
 	}
 
 	keys = l.GetKeys()
-	scope1Keys, ok = keys["scope1"]
+	scope1KeysRaw, ok = keys["scope1"]
 	if !ok {
 		t.Fatal("Expected scope1 to be present")
+	}
+	scope1Keys, ok = scope1KeysRaw.([]string)
+	if !ok {
+		t.Fatalf("Expected scope1 keys to be []string, got %T", scope1KeysRaw)
 	}
 	keyMap = make(map[string]bool)
 	for _, key := range scope1Keys {
@@ -568,9 +580,14 @@ func TestLedger_GetKeys_WithColonInScope(t *testing.T) {
 	}
 
 	keys := l.GetKeys()
-	scopeKeys, ok := keys[scope]
+	scopeKeysRaw, ok := keys[scope]
 	if !ok {
 		t.Fatalf("Expected scope %q to be present", scope)
+	}
+
+	scopeKeys, ok := scopeKeysRaw.([]string)
+	if !ok {
+		t.Fatalf("Expected scope keys to be []string, got %T", scopeKeysRaw)
 	}
 
 	if len(scopeKeys) != 2 {

@@ -3,10 +3,13 @@ package tool
 import (
 	"fmt"
 	"reflect"
+
+	"github.com/hlfshell/gotonomy/utils/semver"
 )
 
-// Type is a helper to grab the type
-// without instantiating a zero value
+// Type is a helper func to grab the type
+// without instantiating a zero value via
+// typecasting nil
 func Type[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }
@@ -18,13 +21,31 @@ type Arguments = map[string]any
 // Agents implement this interface directly, allowing them to be used as tools.
 // Functions and other functionality can be wrapped as tools using helper functions.
 type Tool interface {
-	// Name returns the name of the tool - must be globally unique
+	// ID returns the string identifier of the tool. It is recommended to use
+	// a unique human readable value that can be used to identify the tool.
+	// If you plan on sharing the tool with others, then it is recommended to use
+	// a globally friendly name or allow overwriting. One suggestion is to use
+	// the creator's org or individual name. For instance, hlfshell/weather_tool.
+	// Do not use regularly changing values like UUIDs; you want the values to
+	// be stabled and predictable.
+	ID() string
+
+	// Version returns the version ID of the tool - utilize semvar versioning.
+	// This is generally used for internal tracking of version of tooling for
+	// logging nad developer usage - it is typically not passed to the agent.
+	Version() semver.SemVer
+
+	// Name returns the name of the tool, assumed to be structured such that
+	// it is self explanatory what it does for human and agentic readers.
 	Name() string
 
-	// Description returns a description of what the tool does.
+	// Description returns a description of what the tool does. Focus on a clear
+	// explanation that is human understandable but not too token heavy
+	// as to be poor for agentic consumption.
 	Description() string
 
-	// Parameters returns the list of parameters for the tool.
+	// Parameters returns the list of parameters for the tool. Order
+	// is preserved from the instantiation.
 	Parameters() []Parameter
 
 	// Execute runs the tool with the given context and arguments.
@@ -37,26 +58,37 @@ type Tool interface {
 
 // tool wraps a function to make it implement the Tool interface.
 type tool struct {
+	id          string
 	name        string
 	description string
+	version     *semver.SemVer
 	// parametersByName is used for quick lookups by parameter name
 	parametersByName map[string]Parameter
 	// parametersOrdered preserves the declaration order provided at construction
+	// done due to slices iteration being random for maps
 	parametersOrdered []Parameter
 	handler           func(ctx *Context, args Arguments) ResultInterface
 }
 
-// Name implements Tool.
+func (t *tool) ID() string {
+	return t.id
+}
+
 func (t *tool) Name() string {
 	return t.name
 }
 
-// Description implements Tool.
+func (t *tool) Version() semver.SemVer {
+	if t.version == nil {
+		return semver.SemVer{}
+	}
+	return *t.version
+}
+
 func (t *tool) Description() string {
 	return t.description
 }
 
-// Parameters implements Tool.
 func (t *tool) Parameters() []Parameter {
 	// Return a copy to preserve encapsulation while maintaining declaration order
 	result := make([]Parameter, len(t.parametersOrdered))
@@ -105,7 +137,8 @@ func validateArguments(
 	return validated, nil
 }
 
-// Execute implements Tool
+// Execute runs the internal handler w/ protections and validation, acting
+// as the exposure of the interface for tool.
 func (t *tool) Execute(ctx *Context, args Arguments) ResultInterface {
 	ctx = PrepareContext(ctx, t, args)
 	ctx.Stats().MarkStarted()

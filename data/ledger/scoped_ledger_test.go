@@ -1,19 +1,29 @@
-package scoped_ledger
+package ledger
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
-
-	"github.com/hlfshell/gotonomy/data/ledger"
 )
 
-func TestNewScopedLedger(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "test_scope")
+// mustNewScoped is a test helper that creates a ScopedLedger and fails the test if it errors
+func mustNewScoped(l *Ledger, scope string) *ScopedLedger {
+	sl, err := NewScoped(l, scope)
+	if err != nil {
+		panic(err)
+	}
+	return sl
+}
+
+func TestNewScoped(t *testing.T) {
+	l := NewLedger()
+	sl, err := NewScoped(l, "test_scope")
+	if err != nil {
+		t.Fatalf("NewScoped failed: %v", err)
+	}
 
 	if sl == nil {
-		t.Fatal("NewScopedLedger should not return nil")
+		t.Fatal("NewScoped should not return nil")
 	}
 	if sl.scope != "test_scope" {
 		t.Errorf("Expected scope 'test_scope', got %q", sl.scope)
@@ -24,8 +34,8 @@ func TestNewScopedLedger(t *testing.T) {
 }
 
 func TestScopedLedger_SetData(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test setting string value
 	err := sl.SetData("key1", "value1")
@@ -69,8 +79,8 @@ func TestScopedLedger_SetData(t *testing.T) {
 }
 
 func TestScopedLedger_GetData(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test getting nonexistent key
 	_, err := sl.GetData("nonexistent")
@@ -94,7 +104,7 @@ func TestScopedLedger_GetData(t *testing.T) {
 	if entry.Scope != "scope1" {
 		t.Errorf("Expected scope 'scope1', got %q", entry.Scope)
 	}
-	if entry.Operation != ledger.OperationSet {
+	if entry.Operation != OperationSet {
 		t.Errorf("Expected operation 'set', got %q", entry.Operation)
 	}
 	if entry.Timestamp.IsZero() {
@@ -114,8 +124,8 @@ func TestScopedLedger_GetData(t *testing.T) {
 }
 
 func TestGetDataScoped(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test getting nonexistent key
 	_, err := GetDataScoped[string](sl, "nonexistent")
@@ -172,8 +182,8 @@ func TestGetDataScoped(t *testing.T) {
 }
 
 func TestScopedLedger_DeleteData(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test deleting nonexistent key (should not error)
 	err := sl.DeleteData("nonexistent")
@@ -215,14 +225,14 @@ func TestScopedLedger_DeleteData(t *testing.T) {
 	}
 
 	lastEntry := history[len(history)-1]
-	if lastEntry.Operation != ledger.OperationDelete {
+	if lastEntry.Operation != OperationDelete {
 		t.Errorf("Expected last operation to be 'delete', got %q", lastEntry.Operation)
 	}
 }
 
 func TestScopedLedger_GetDataHistory(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test getting history for nonexistent key
 	_, err := sl.GetDataHistory("nonexistent")
@@ -267,7 +277,7 @@ func TestScopedLedger_GetDataHistory(t *testing.T) {
 		if entry.Key != "key1" {
 			t.Errorf("Expected key 'key1', got %q", entry.Key)
 		}
-		if entry.Operation != ledger.OperationSet {
+		if entry.Operation != OperationSet {
 			t.Errorf("Expected operation 'set', got %q", entry.Operation)
 		}
 	}
@@ -281,8 +291,8 @@ func TestScopedLedger_GetDataHistory(t *testing.T) {
 }
 
 func TestGetDataHistoryScoped(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test getting history for nonexistent key
 	_, err := GetDataHistoryScoped[string](sl, "nonexistent")
@@ -338,11 +348,11 @@ func TestGetDataHistoryScoped(t *testing.T) {
 }
 
 func TestSetDataFunc(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test SetDataFunc on nonexistent key
-	err := SetDataFunc[int](sl, "nonexistent", func(v int) (int, error) {
+	err := SetDataFuncScoped[int](sl, "nonexistent", func(v int) (int, error) {
 		return v + 1, nil
 	})
 	if err == nil {
@@ -356,7 +366,7 @@ func TestSetDataFunc(t *testing.T) {
 	}
 
 	// Use SetDataFunc to increment
-	err = SetDataFunc[int](sl, "key1", func(v int) (int, error) {
+	err = SetDataFuncScoped[int](sl, "key1", func(v int) (int, error) {
 		return v + 5, nil
 	})
 	if err != nil {
@@ -373,7 +383,7 @@ func TestSetDataFunc(t *testing.T) {
 	}
 
 	// Test with error in function
-	err = SetDataFunc[int](sl, "key1", func(v int) (int, error) {
+	err = SetDataFuncScoped[int](sl, "key1", func(v int) (int, error) {
 		return 0, json.Unmarshal([]byte("invalid"), &v)
 	})
 	if err == nil {
@@ -391,9 +401,9 @@ func TestSetDataFunc(t *testing.T) {
 }
 
 func TestScopedLedger_GetKeys(t *testing.T) {
-	l := ledger.NewLedger()
-	sl1 := NewScopedLedger(l, "scope1")
-	sl2 := NewScopedLedger(l, "scope2")
+	l := NewLedger()
+	sl1 := mustNewScoped(l, "scope1")
+	sl2 := mustNewScoped(l, "scope2")
 
 	// Test empty scope
 	keys := sl1.GetKeys()
@@ -464,9 +474,9 @@ func TestScopedLedger_GetKeys(t *testing.T) {
 }
 
 func TestScopedLedger_ScopeWithColon(t *testing.T) {
-	l := ledger.NewLedger()
+	l := NewLedger()
 	scope := "parent:child"
-	sl := NewScopedLedger(l, scope)
+	sl := mustNewScoped(l, scope)
 
 	// Set data using a scope that contains ":".
 	err := sl.SetData("key1", "value1")
@@ -512,8 +522,8 @@ func TestScopedLedger_ScopeWithColon(t *testing.T) {
 }
 
 func TestScopedLedger_MarshalJSON(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test empty scope
 	data, err := sl.MarshalJSON()
@@ -521,7 +531,7 @@ func TestScopedLedger_MarshalJSON(t *testing.T) {
 		t.Fatalf("MarshalJSON failed: %v", err)
 	}
 
-	var result map[string][]ledger.Entry
+	var result map[string][]Entry
 	err = json.Unmarshal(data, &result)
 	if err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
@@ -581,8 +591,8 @@ func TestScopedLedger_MarshalJSON(t *testing.T) {
 }
 
 func TestScopedLedger_UnmarshalJSON(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test unmarshaling (should return error)
 	data := []byte(`{"key1": [{"key": "key1", "value": "value1"}]}`)
@@ -593,9 +603,9 @@ func TestScopedLedger_UnmarshalJSON(t *testing.T) {
 }
 
 func TestScopedLedger_ScopeIsolation(t *testing.T) {
-	l := ledger.NewLedger()
-	sl1 := NewScopedLedger(l, "scope1")
-	sl2 := NewScopedLedger(l, "scope2")
+	l := NewLedger()
+	sl1 := mustNewScoped(l, "scope1")
+	sl2 := mustNewScoped(l, "scope2")
 
 	// Set data in scope1
 	err := sl1.SetData("key1", "value1")
@@ -645,8 +655,8 @@ func TestScopedLedger_ScopeIsolation(t *testing.T) {
 }
 
 func TestScopedLedger_ComplexTypes(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test with struct
 	type TestStruct struct {
@@ -703,8 +713,8 @@ func TestScopedLedger_ComplexTypes(t *testing.T) {
 }
 
 func TestScopedLedger_ConcurrentAccess(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test concurrent writes
 	done := make(chan bool, 10)
@@ -748,8 +758,8 @@ func TestScopedLedger_ConcurrentAccess(t *testing.T) {
 }
 
 func TestScopedLedger_EdgeCases(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Test empty key
 	err := sl.SetData("", "value")
@@ -808,8 +818,8 @@ func TestScopedLedger_EdgeCases(t *testing.T) {
 }
 
 func TestScopedLedger_DeleteAndRecreate(t *testing.T) {
-	l := ledger.NewLedger()
-	sl := NewScopedLedger(l, "scope1")
+	l := NewLedger()
+	sl := mustNewScoped(l, "scope1")
 
 	// Set, delete, and recreate
 	err := sl.SetData("key1", "value1")
@@ -844,25 +854,28 @@ func TestScopedLedger_DeleteAndRecreate(t *testing.T) {
 	if len(history) != 3 {
 		t.Errorf("Expected history length 3, got %d", len(history))
 	}
-	if history[0].Operation != ledger.OperationSet {
+	if history[0].Operation != OperationSet {
 		t.Errorf("Expected first operation 'set', got %q", history[0].Operation)
 	}
-	if history[1].Operation != ledger.OperationDelete {
+	if history[1].Operation != OperationDelete {
 		t.Errorf("Expected second operation 'delete', got %q", history[1].Operation)
 	}
-	if history[2].Operation != ledger.OperationSet {
+	if history[2].Operation != OperationSet {
 		t.Errorf("Expected third operation 'set', got %q", history[2].Operation)
 	}
 }
 
 func TestScopedLedger_Subscoped_Basic(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	child := parent.Subscoped("child")
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+	child, err := parent.Scoped("child")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Verify child has correct scope
-	if child.scope != "parent:child" {
-		t.Errorf("Expected scope 'parent:child', got %q", child.scope)
+	if child.scope != "parent::child" {
+		t.Errorf("Expected scope 'parent::child', got %q", child.scope)
 	}
 
 	// Verify child uses same underlying ledger
@@ -871,7 +884,7 @@ func TestScopedLedger_Subscoped_Basic(t *testing.T) {
 	}
 
 	// Set data in child scope
-	err := child.SetData("key1", "value1")
+	err = child.SetData("key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -881,8 +894,8 @@ func TestScopedLedger_Subscoped_Basic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData failed: %v", err)
 	}
-	if entry.Scope != "parent:child" {
-		t.Errorf("Expected entry scope 'parent:child', got %q", entry.Scope)
+	if entry.Scope != "parent::child" {
+		t.Errorf("Expected entry scope 'parent::child', got %q", entry.Scope)
 	}
 
 	// Verify parent cannot see child's data
@@ -902,25 +915,34 @@ func TestScopedLedger_Subscoped_Basic(t *testing.T) {
 }
 
 func TestScopedLedger_Subscoped_Nested(t *testing.T) {
-	l := ledger.NewLedger()
-	root := NewScopedLedger(l, "root")
-	level1 := root.Subscoped("level1")
-	level2 := level1.Subscoped("level2")
-	level3 := level2.Subscoped("level3")
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+	level1, err := root.Scoped("level1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level3, err := level2.Scoped("level3")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Verify nested scopes
-	if level1.scope != "root:level1" {
-		t.Errorf("Expected scope 'root:level1', got %q", level1.scope)
+	if level1.scope != "root::level1" {
+		t.Errorf("Expected scope 'root::level1', got %q", level1.scope)
 	}
-	if level2.scope != "root:level1:level2" {
-		t.Errorf("Expected scope 'root:level1:level2', got %q", level2.scope)
+	if level2.scope != "root::level1::level2" {
+		t.Errorf("Expected scope 'root::level1::level2', got %q", level2.scope)
 	}
-	if level3.scope != "root:level1:level2:level3" {
-		t.Errorf("Expected scope 'root:level1:level2:level3', got %q", level3.scope)
+	if level3.scope != "root::level1::level2::level3" {
+		t.Errorf("Expected scope 'root::level1::level2::level3', got %q", level3.scope)
 	}
 
 	// Set data at each level
-	err := root.SetData("root_key", "root_value")
+	err = root.SetData("root_key", "root_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -991,13 +1013,19 @@ func TestScopedLedger_Subscoped_Nested(t *testing.T) {
 }
 
 func TestScopedLedger_Subscoped_Isolation(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	child1 := parent.Subscoped("child1")
-	child2 := parent.Subscoped("child2")
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+	child1, err := parent.Scoped("child1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	child2, err := parent.Scoped("child2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Set data in each child with same key
-	err := child1.SetData("shared_key", "child1_value")
+	err = child1.SetData("shared_key", "child1_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -1041,12 +1069,15 @@ func TestScopedLedger_Subscoped_Isolation(t *testing.T) {
 }
 
 func TestScopedLedger_Subscoped_GetKeys(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	child := parent.Subscoped("child")
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+	child, err := parent.Scoped("child")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Set data in parent
-	err := parent.SetData("parent_key1", "value1")
+	err = parent.SetData("parent_key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -1092,19 +1123,22 @@ func TestScopedLedger_Subscoped_GetKeys(t *testing.T) {
 }
 
 func TestScopedLedger_Subscoped_WithPrefix(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+
 	// Test that if subScope already contains the parent scope prefix,
 	// it uses the subScope as-is (avoids double prefix)
-	child := parent.Subscoped("parent:child")
-	
-	if child.scope != "parent:child" {
-		t.Errorf("Expected scope 'parent:child' (no double prefix), got %q", child.scope)
+	child, err := parent.Scoped("parent::child")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	if child.scope != "parent::child" {
+		t.Errorf("Expected scope 'parent::child' (no double prefix), got %q", child.scope)
 	}
 
 	// Set data and verify it works
-	err := child.SetData("key1", "value1")
+	err = child.SetData("key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -1113,25 +1147,28 @@ func TestScopedLedger_Subscoped_WithPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData failed: %v", err)
 	}
-	if entry.Scope != "parent:child" {
-		t.Errorf("Expected entry scope 'parent:child', got %q", entry.Scope)
+	if entry.Scope != "parent::child" {
+		t.Errorf("Expected entry scope 'parent::child', got %q", entry.Scope)
 	}
 }
 
 func TestScopedLedger_Subscoped_EmptySubScope(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+
 	// Test with empty subscope
-	child := parent.Subscoped("")
-	
-	// Empty subscope should create "parent:" scope
-	if child.scope != "parent:" {
-		t.Errorf("Expected scope 'parent:' for empty subscope, got %q", child.scope)
+	child, err := parent.Scoped("")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Empty subscope should create "parent::" scope
+	if child.scope != "parent::" {
+		t.Errorf("Expected scope 'parent::' for empty subscope, got %q", child.scope)
 	}
 
 	// Set data and verify it works
-	err := child.SetData("key1", "value1")
+	err = child.SetData("key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -1140,18 +1177,21 @@ func TestScopedLedger_Subscoped_EmptySubScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData failed: %v", err)
 	}
-	if entry.Scope != "parent:" {
-		t.Errorf("Expected entry scope 'parent:', got %q", entry.Scope)
+	if entry.Scope != "parent::" {
+		t.Errorf("Expected entry scope 'parent::', got %q", entry.Scope)
 	}
 }
 
 func TestScopedLedger_Subscoped_DataHistory(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	child := parent.Subscoped("child")
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+	child, err := parent.Scoped("child")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Set data multiple times in child
-	err := child.SetData("key1", "value1")
+	err = child.SetData("key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -1174,8 +1214,8 @@ func TestScopedLedger_Subscoped_DataHistory(t *testing.T) {
 
 	// Verify all entries have correct scope
 	for _, entry := range history {
-		if entry.Scope != "parent:child" {
-			t.Errorf("Expected entry scope 'parent:child', got %q", entry.Scope)
+		if entry.Scope != "parent::child" {
+			t.Errorf("Expected entry scope 'parent::child', got %q", entry.Scope)
 		}
 	}
 
@@ -1193,12 +1233,15 @@ func TestScopedLedger_Subscoped_DataHistory(t *testing.T) {
 }
 
 func TestScopedLedger_Subscoped_DeleteData(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	child := parent.Subscoped("child")
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+	child, err := parent.Scoped("child")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Set and delete data in child
-	err := child.SetData("key1", "value1")
+	err = child.SetData("key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
@@ -1222,27 +1265,30 @@ func TestScopedLedger_Subscoped_DeleteData(t *testing.T) {
 	if len(history) != 2 {
 		t.Errorf("Expected 2 entries (set + delete), got %d", len(history))
 	}
-	if history[1].Operation != ledger.OperationDelete {
+	if history[1].Operation != OperationDelete {
 		t.Errorf("Expected last operation 'delete', got %q", history[1].Operation)
 	}
-	if history[1].Scope != "parent:child" {
-		t.Errorf("Expected delete entry scope 'parent:child', got %q", history[1].Scope)
+	if history[1].Scope != "parent::child" {
+		t.Errorf("Expected delete entry scope 'parent::child', got %q", history[1].Scope)
 	}
 }
 
 func TestScopedLedger_Subscoped_SetDataFunc(t *testing.T) {
-	l := ledger.NewLedger()
-	parent := NewScopedLedger(l, "parent")
-	child := parent.Subscoped("child")
+	l := NewLedger()
+	parent := mustNewScoped(l, "parent")
+	child, err := parent.Scoped("child")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
 
 	// Set initial value in child
-	err := child.SetData("key1", 10)
+	err = child.SetData("key1", 10)
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
 
 	// Use SetDataFunc to modify value
-	err = SetDataFunc[int](child, "key1", func(v int) (int, error) {
+	err = SetDataFuncScoped[int](child, "key1", func(v int) (int, error) {
 		return v + 5, nil
 	})
 	if err != nil {
@@ -1263,78 +1309,105 @@ func TestScopedLedger_Subscoped_SetDataFunc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetData failed: %v", err)
 	}
-	if entry.Scope != "parent:child" {
-		t.Errorf("Expected entry scope 'parent:child', got %q", entry.Scope)
+	if entry.Scope != "parent::child" {
+		t.Errorf("Expected entry scope 'parent::child', got %q", entry.Scope)
 	}
 }
 
 func TestScopedLedger_Subscoped_ChainedPrefixDetection(t *testing.T) {
-	l := ledger.NewLedger()
-	root := NewScopedLedger(l, "root")
-	level1 := root.Subscoped("level1")
-	
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+	level1, err := root.Scoped("level1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
 	// Test 1: Creating a subscope from a subscoped ledger with full prefix
 	// This should detect the prefix and not double it
-	level2a := level1.Subscoped("root:level1:level2")
-	if level2a.scope != "root:level1:level2" {
-		t.Errorf("Expected scope 'root:level1:level2' (no double prefix), got %q", level2a.scope)
+	level2a, err := level1.Scoped("root::level1::level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
 	}
-	
+	if level2a.scope != "root::level1::level2" {
+		t.Errorf("Expected scope 'root::level1::level2' (no double prefix), got %q", level2a.scope)
+	}
+
 	// Test 2: Creating a subscope from a subscoped ledger with just the subscope name
 	// This should append normally
-	level2b := level1.Subscoped("level2")
-	if level2b.scope != "root:level1:level2" {
-		t.Errorf("Expected scope 'root:level1:level2', got %q", level2b.scope)
+	level2b, err := level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
 	}
-	
-	// Test 3: Creating a subscope with partial prefix (root: but not root:level1:)
-	// This should still append, creating root:level1:root:something
-	level2c := level1.Subscoped("root:something")
-	if level2c.scope != "root:level1:root:something" {
-		t.Errorf("Expected scope 'root:level1:root:something', got %q", level2c.scope)
+	if level2b.scope != "root::level1::level2" {
+		t.Errorf("Expected scope 'root::level1::level2', got %q", level2b.scope)
 	}
-	
+
+	// Test 3: Creating a subscope with a name that contains ":" (single colon is allowed)
+	// This should still append, creating root::level1::root:something
+	level2c, err := level1.Scoped("root:something")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	if level2c.scope != "root::level1::root:something" {
+		t.Errorf("Expected scope 'root::level1::root:something', got %q", level2c.scope)
+	}
+
 	// Test 4: Deep nesting with prefix detection
-	level3 := level2a.Subscoped("level3")
-	if level3.scope != "root:level1:level2:level3" {
-		t.Errorf("Expected scope 'root:level1:level2:level3', got %q", level3.scope)
+	level3, err := level2a.Scoped("level3")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
 	}
-	
+	if level3.scope != "root::level1::level2::level3" {
+		t.Errorf("Expected scope 'root::level1::level2::level3', got %q", level3.scope)
+	}
+
 	// Test 5: Deep nesting with full prefix
-	level4 := level3.Subscoped("root:level1:level2:level3:level4")
-	if level4.scope != "root:level1:level2:level3:level4" {
-		t.Errorf("Expected scope 'root:level1:level2:level3:level4' (no double prefix), got %q", level4.scope)
+	level4, err := level3.Scoped("root::level1::level2::level3::level4")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	if level4.scope != "root::level1::level2::level3::level4" {
+		t.Errorf("Expected scope 'root::level1::level2::level3::level4' (no double prefix), got %q", level4.scope)
 	}
 }
 
 func TestScopedLedger_Subscoped_ChainedDataIsolation(t *testing.T) {
-	l := ledger.NewLedger()
-	root := NewScopedLedger(l, "root")
-	level1 := root.Subscoped("level1")
-	level2 := level1.Subscoped("level2")
-	level3 := level2.Subscoped("level3")
-	
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+	level1, err := root.Scoped("level1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level3, err := level2.Scoped("level3")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
 	// Set data at each level with the same key name
-	err := root.SetData("shared_key", "root_value")
+	err = root.SetData("shared_key", "root_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	err = level1.SetData("shared_key", "level1_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	err = level2.SetData("shared_key", "level2_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	err = level3.SetData("shared_key", "level3_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	// Verify each level sees only its own value
 	rootValue, err := GetDataScoped[string](root, "shared_key")
 	if err != nil {
@@ -1343,7 +1416,7 @@ func TestScopedLedger_Subscoped_ChainedDataIsolation(t *testing.T) {
 	if rootValue != "root_value" {
 		t.Errorf("Expected root 'root_value', got %q", rootValue)
 	}
-	
+
 	level1Value, err := GetDataScoped[string](level1, "shared_key")
 	if err != nil {
 		t.Fatalf("GetDataScoped failed: %v", err)
@@ -1351,7 +1424,7 @@ func TestScopedLedger_Subscoped_ChainedDataIsolation(t *testing.T) {
 	if level1Value != "level1_value" {
 		t.Errorf("Expected level1 'level1_value', got %q", level1Value)
 	}
-	
+
 	level2Value, err := GetDataScoped[string](level2, "shared_key")
 	if err != nil {
 		t.Fatalf("GetDataScoped failed: %v", err)
@@ -1359,7 +1432,7 @@ func TestScopedLedger_Subscoped_ChainedDataIsolation(t *testing.T) {
 	if level2Value != "level2_value" {
 		t.Errorf("Expected level2 'level2_value', got %q", level2Value)
 	}
-	
+
 	level3Value, err := GetDataScoped[string](level3, "shared_key")
 	if err != nil {
 		t.Fatalf("GetDataScoped failed: %v", err)
@@ -1367,23 +1440,23 @@ func TestScopedLedger_Subscoped_ChainedDataIsolation(t *testing.T) {
 	if level3Value != "level3_value" {
 		t.Errorf("Expected level3 'level3_value', got %q", level3Value)
 	}
-	
+
 	// Verify GetKeys returns correct keys for each level
 	rootKeys := root.GetKeys()
 	if len(rootKeys) != 1 || rootKeys[0] != "shared_key" {
 		t.Errorf("Expected root to have only 'shared_key', got %v", rootKeys)
 	}
-	
+
 	level1Keys := level1.GetKeys()
 	if len(level1Keys) != 1 || level1Keys[0] != "shared_key" {
 		t.Errorf("Expected level1 to have only 'shared_key', got %v", level1Keys)
 	}
-	
+
 	level2Keys := level2.GetKeys()
 	if len(level2Keys) != 1 || level2Keys[0] != "shared_key" {
 		t.Errorf("Expected level2 to have only 'shared_key', got %v", level2Keys)
 	}
-	
+
 	level3Keys := level3.GetKeys()
 	if len(level3Keys) != 1 || level3Keys[0] != "shared_key" {
 		t.Errorf("Expected level3 to have only 'shared_key', got %v", level3Keys)
@@ -1391,51 +1464,57 @@ func TestScopedLedger_Subscoped_ChainedDataIsolation(t *testing.T) {
 }
 
 func TestScopedLedger_Subscoped_ChainedOperations(t *testing.T) {
-	l := ledger.NewLedger()
-	root := NewScopedLedger(l, "root")
-	level1 := root.Subscoped("level1")
-	level2 := level1.Subscoped("level2")
-	
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+	level1, err := root.Scoped("level1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
 	// Test SetData in deeply nested scope
-	err := level2.SetData("key1", "value1")
+	err = level2.SetData("key1", "value1")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	// Verify entry has correct scope
 	entry, err := level2.GetData("key1")
 	if err != nil {
 		t.Fatalf("GetData failed: %v", err)
 	}
-	if entry.Scope != "root:level1:level2" {
-		t.Errorf("Expected entry scope 'root:level1:level2', got %q", entry.Scope)
+	if entry.Scope != "root::level1::level2" {
+		t.Errorf("Expected entry scope 'root::level1::level2', got %q", entry.Scope)
 	}
-	
+
 	// Test DeleteData in deeply nested scope
 	err = level2.DeleteData("key1")
 	if err != nil {
 		t.Fatalf("DeleteData failed: %v", err)
 	}
-	
+
 	// Verify deletion
 	_, err = level2.GetData("key1")
 	if err == nil {
 		t.Fatal("GetData should return error for deleted key")
 	}
-	
+
 	// Test SetDataFunc in deeply nested scope
 	err = level2.SetData("key2", 10)
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
-	err = SetDataFunc[int](level2, "key2", func(v int) (int, error) {
+
+	err = SetDataFuncScoped[int](level2, "key2", func(v int) (int, error) {
 		return v + 5, nil
 	})
 	if err != nil {
 		t.Fatalf("SetDataFunc failed: %v", err)
 	}
-	
+
 	value, err := GetDataScoped[int](level2, "key2")
 	if err != nil {
 		t.Fatalf("GetDataScoped failed: %v", err)
@@ -1443,7 +1522,7 @@ func TestScopedLedger_Subscoped_ChainedOperations(t *testing.T) {
 	if value != 15 {
 		t.Errorf("Expected value 15, got %d", value)
 	}
-	
+
 	// Test GetDataHistory in deeply nested scope
 	history, err := level2.GetDataHistory("key2")
 	if err != nil {
@@ -1452,37 +1531,49 @@ func TestScopedLedger_Subscoped_ChainedOperations(t *testing.T) {
 	if len(history) != 2 {
 		t.Errorf("Expected 2 entries in history, got %d", len(history))
 	}
-	
+
 	// Verify all entries have correct scope
 	for _, e := range history {
-		if e.Scope != "root:level1:level2" {
-			t.Errorf("Expected entry scope 'root:level1:level2', got %q", e.Scope)
+		if e.Scope != "root::level1::level2" {
+			t.Errorf("Expected entry scope 'root::level1::level2', got %q", e.Scope)
 		}
 	}
 }
 
 func TestScopedLedger_Subscoped_ChainedSiblingIsolation(t *testing.T) {
-	l := ledger.NewLedger()
-	root := NewScopedLedger(l, "root")
-	
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+
 	// Create two separate branches from root
-	branch1_level1 := root.Subscoped("branch1")
-	branch1_level2 := branch1_level1.Subscoped("level2")
-	
-	branch2_level1 := root.Subscoped("branch2")
-	branch2_level2 := branch2_level1.Subscoped("level2")
-	
+	branch1_level1, err := root.Scoped("branch1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branch1_level2, err := branch1_level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	branch2_level1, err := root.Scoped("branch2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branch2_level2, err := branch2_level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
 	// Set data in each branch with same key
-	err := branch1_level2.SetData("key1", "branch1_value")
+	err = branch1_level2.SetData("key1", "branch1_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	err = branch2_level2.SetData("key1", "branch2_value")
 	if err != nil {
 		t.Fatalf("SetData failed: %v", err)
 	}
-	
+
 	// Verify each branch sees only its own data
 	value1, err := GetDataScoped[string](branch1_level2, "key1")
 	if err != nil {
@@ -1491,7 +1582,7 @@ func TestScopedLedger_Subscoped_ChainedSiblingIsolation(t *testing.T) {
 	if value1 != "branch1_value" {
 		t.Errorf("Expected 'branch1_value', got %q", value1)
 	}
-	
+
 	value2, err := GetDataScoped[string](branch2_level2, "key1")
 	if err != nil {
 		t.Fatalf("GetDataScoped failed: %v", err)
@@ -1499,22 +1590,529 @@ func TestScopedLedger_Subscoped_ChainedSiblingIsolation(t *testing.T) {
 	if value2 != "branch2_value" {
 		t.Errorf("Expected 'branch2_value', got %q", value2)
 	}
-	
+
 	// Verify branches cannot see each other's data
 	_, err = branch1_level2.GetData("key1")
 	if err != nil {
 		t.Fatalf("branch1_level2 should see its own data: %v", err)
 	}
-	
+
 	// Verify scopes are different
 	if branch1_level2.scope == branch2_level2.scope {
 		t.Error("Branch scopes should be different")
 	}
-	if branch1_level2.scope != "root:branch1:level2" {
-		t.Errorf("Expected branch1 scope 'root:branch1:level2', got %q", branch1_level2.scope)
+	if branch1_level2.scope != "root::branch1::level2" {
+		t.Errorf("Expected branch1 scope 'root::branch1::level2', got %q", branch1_level2.scope)
 	}
-	if branch2_level2.scope != "root:branch2:level2" {
-		t.Errorf("Expected branch2 scope 'root:branch2:level2', got %q", branch2_level2.scope)
+	if branch2_level2.scope != "root::branch2::level2" {
+		t.Errorf("Expected branch2 scope 'root::branch2::level2', got %q", branch2_level2.scope)
 	}
 }
 
+// TestScopedLedger_DeepNesting tests very deep nesting (5+ levels)
+func TestScopedLedger_DeepNesting(t *testing.T) {
+	l := NewLedger()
+	root := mustNewScoped(l, "a")
+	level1, err := root.Scoped("b")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("c")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level3, err := level2.Scoped("d")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level4, err := level3.Scoped("e")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level5, err := level4.Scoped("f")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Verify scope strings
+	expectedScopes := []struct {
+		sl     *ScopedLedger
+		expect string
+	}{
+		{root, "a"},
+		{level1, "a::b"},
+		{level2, "a::b::c"},
+		{level3, "a::b::c::d"},
+		{level4, "a::b::c::d::e"},
+		{level5, "a::b::c::d::e::f"},
+	}
+
+	for _, tc := range expectedScopes {
+		if tc.sl.scope != tc.expect {
+			t.Errorf("Expected scope %q, got %q", tc.expect, tc.sl.scope)
+		}
+	}
+
+	// Set data at each level
+	testData := []struct {
+		sl    *ScopedLedger
+		key   string
+		value string
+	}{
+		{root, "key_a", "value_a"},
+		{level1, "key_b", "value_b"},
+		{level2, "key_c", "value_c"},
+		{level3, "key_d", "value_d"},
+		{level4, "key_e", "value_e"},
+		{level5, "key_f", "value_f"},
+	}
+
+	for _, td := range testData {
+		err = td.sl.SetData(td.key, td.value)
+		if err != nil {
+			t.Fatalf("SetData failed for %s: %v", td.key, err)
+		}
+	}
+
+	// Verify each level can only see its own data
+	for _, td := range testData {
+		value, err := GetDataScoped[string](td.sl, td.key)
+		if err != nil {
+			t.Fatalf("GetDataScoped failed for %s: %v", td.key, err)
+		}
+		if value != td.value {
+			t.Errorf("Expected %q for %s, got %q", td.value, td.key, value)
+		}
+	}
+
+	// Verify Entry.Scopes is correctly populated
+	entry, err := level5.GetData("key_f")
+	if err != nil {
+		t.Fatalf("GetData failed: %v", err)
+	}
+	expectedScopesSlice := []string{"a", "b", "c", "d", "e", "f"}
+	if len(entry.Scopes) != len(expectedScopesSlice) {
+		t.Errorf("Expected %d scopes, got %d: %v", len(expectedScopesSlice), len(entry.Scopes), entry.Scopes)
+	}
+	for i, scope := range expectedScopesSlice {
+		if i >= len(entry.Scopes) || entry.Scopes[i] != scope {
+			t.Errorf("Expected scope[%d] = %q, got %v", i, scope, entry.Scopes)
+		}
+	}
+}
+
+// TestScopedLedger_MixedKeysAndNestedScopes tests scopes that have both keys and nested scopes
+func TestScopedLedger_MixedKeysAndNestedScopes(t *testing.T) {
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+	level1, err := root.Scoped("level1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Set data at root level
+	err = root.SetData("root_key1", "root_value1")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = root.SetData("root_key2", "root_value2")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Set data at level1
+	err = level1.SetData("level1_key", "level1_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Set data at level2 (nested under level1)
+	err = level2.SetData("level2_key", "level2_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Verify GetKeys returns correct keys for each level
+	rootKeys := root.GetKeys()
+	if len(rootKeys) != 2 {
+		t.Errorf("Expected root to have 2 keys, got %d: %v", len(rootKeys), rootKeys)
+	}
+	expectedRootKeys := map[string]bool{"root_key1": true, "root_key2": true}
+	for _, key := range rootKeys {
+		if !expectedRootKeys[key] {
+			t.Errorf("Unexpected root key: %q", key)
+		}
+	}
+
+	level1Keys := level1.GetKeys()
+	if len(level1Keys) != 1 {
+		t.Errorf("Expected level1 to have 1 key, got %d: %v", len(level1Keys), level1Keys)
+	}
+	if level1Keys[0] != "level1_key" {
+		t.Errorf("Expected level1 key 'level1_key', got %q", level1Keys[0])
+	}
+
+	level2Keys := level2.GetKeys()
+	if len(level2Keys) != 1 {
+		t.Errorf("Expected level2 to have 1 key, got %d: %v", len(level2Keys), level2Keys)
+	}
+	if level2Keys[0] != "level2_key" {
+		t.Errorf("Expected level2 key 'level2_key', got %q", level2Keys[0])
+	}
+
+	// Verify data isolation
+	rootValue, err := GetDataScoped[string](root, "root_key1")
+	if err != nil {
+		t.Fatalf("GetDataScoped failed: %v", err)
+	}
+	if rootValue != "root_value1" {
+		t.Errorf("Expected 'root_value1', got %q", rootValue)
+	}
+
+	// Root should not see level1 or level2 keys
+	_, err = root.GetData("level1_key")
+	if err == nil {
+		t.Fatal("Root should not see level1's data")
+	}
+	_, err = root.GetData("level2_key")
+	if err == nil {
+		t.Fatal("Root should not see level2's data")
+	}
+}
+
+// TestScopedLedger_DeepNesting_MarshalUnmarshal tests marshal/unmarshal with deeply nested scopes
+func TestScopedLedger_DeepNesting_MarshalUnmarshal(t *testing.T) {
+	l1 := NewLedger()
+	root := mustNewScoped(l1, "a")
+	level1, err := root.Scoped("b")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("c")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level3, err := level2.Scoped("d")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level4, err := level3.Scoped("e")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Set data at multiple levels
+	err = root.SetData("key_a", "value_a")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level1.SetData("key_b", "value_b")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level2.SetData("key_c", "value_c")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level3.SetData("key_d", "value_d")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level4.SetData("key_e", "value_e")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Marshal the ledger
+	data, err := l1.MarshalJSON()
+	if err != nil {
+		t.Fatalf("MarshalJSON failed: %v", err)
+	}
+
+	// Unmarshal into new ledger
+	l2 := NewLedger()
+	err = l2.UnmarshalJSON(data)
+	if err != nil {
+		t.Fatalf("UnmarshalJSON failed: %v", err)
+	}
+
+	// Verify all data is preserved using scoped ledgers
+	// Create scoped ledgers by chaining Scoped() calls since NewScoped doesn't accept "::"
+	root2 := mustNewScoped(l2, "a")
+	level1_2, err := root2.Scoped("b")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2_2, err := level1_2.Scoped("c")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level3_2, err := level2_2.Scoped("d")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level4_2, err := level3_2.Scoped("e")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	testCases := []struct {
+		sl    *ScopedLedger
+		key   string
+		value string
+	}{
+		{root2, "key_a", "value_a"},
+		{level1_2, "key_b", "value_b"},
+		{level2_2, "key_c", "value_c"},
+		{level3_2, "key_d", "value_d"},
+		{level4_2, "key_e", "value_e"},
+	}
+
+	for _, tc := range testCases {
+		value, err := GetDataScoped[string](tc.sl, tc.key)
+		if err != nil {
+			t.Fatalf("GetDataScoped failed for key %q: %v", tc.key, err)
+		}
+		if value != tc.value {
+			t.Errorf("Expected value %q for key %q, got %q", tc.value, tc.key, value)
+		}
+	}
+
+	// Verify Entry.Scopes is correctly populated after unmarshal
+	scoped := level4_2
+	entry, err := scoped.GetData("key_e")
+	if err != nil {
+		t.Fatalf("GetData failed: %v", err)
+	}
+	expectedScopes := []string{"a", "b", "c", "d", "e"}
+	if len(entry.Scopes) != len(expectedScopes) {
+		t.Errorf("Expected %d scopes, got %d: %v", len(expectedScopes), len(entry.Scopes), entry.Scopes)
+	}
+	for i, scope := range expectedScopes {
+		if i >= len(entry.Scopes) || entry.Scopes[i] != scope {
+			t.Errorf("Expected scope[%d] = %q, got %v", i, scope, entry.Scopes)
+		}
+	}
+}
+
+// TestScopedLedger_ComplexNestedStructure tests a complex structure with multiple branches and deep nesting
+func TestScopedLedger_ComplexNestedStructure(t *testing.T) {
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+
+	// Create branch A: root -> branchA -> level2 -> level3
+	branchA_level1, err := root.Scoped("branchA")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branchA_level2, err := branchA_level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branchA_level3, err := branchA_level2.Scoped("level3")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Create branch B: root -> branchB -> level2 -> level3 -> level4
+	branchB_level1, err := root.Scoped("branchB")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branchB_level2, err := branchB_level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branchB_level3, err := branchB_level2.Scoped("level3")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	branchB_level4, err := branchB_level3.Scoped("level4")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Set data at various levels
+	err = root.SetData("root_key", "root_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	err = branchA_level1.SetData("branchA_key", "branchA_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = branchA_level3.SetData("branchA_level3_key", "branchA_level3_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	err = branchB_level2.SetData("branchB_level2_key", "branchB_level2_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = branchB_level4.SetData("branchB_level4_key", "branchB_level4_value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Verify all data is accessible at correct scopes
+	testCases := []struct {
+		sl    *ScopedLedger
+		key   string
+		value string
+	}{
+		{root, "root_key", "root_value"},
+		{branchA_level1, "branchA_key", "branchA_value"},
+		{branchA_level3, "branchA_level3_key", "branchA_level3_value"},
+		{branchB_level2, "branchB_level2_key", "branchB_level2_value"},
+		{branchB_level4, "branchB_level4_key", "branchB_level4_value"},
+	}
+
+	for _, tc := range testCases {
+		value, err := GetDataScoped[string](tc.sl, tc.key)
+		if err != nil {
+			t.Fatalf("GetDataScoped failed for key %q: %v", tc.key, err)
+		}
+		if value != tc.value {
+			t.Errorf("Expected %q for key %q, got %q", tc.value, tc.key, value)
+		}
+	}
+
+	// Verify GetKeys works correctly for all levels
+	rootKeys := root.GetKeys()
+	if len(rootKeys) != 1 || rootKeys[0] != "root_key" {
+		t.Errorf("Expected root to have ['root_key'], got %v", rootKeys)
+	}
+
+	branchA_level1Keys := branchA_level1.GetKeys()
+	if len(branchA_level1Keys) != 1 || branchA_level1Keys[0] != "branchA_key" {
+		t.Errorf("Expected branchA_level1 to have ['branchA_key'], got %v", branchA_level1Keys)
+	}
+
+	branchA_level3Keys := branchA_level3.GetKeys()
+	if len(branchA_level3Keys) != 1 || branchA_level3Keys[0] != "branchA_level3_key" {
+		t.Errorf("Expected branchA_level3 to have ['branchA_level3_key'], got %v", branchA_level3Keys)
+	}
+
+	branchB_level2Keys := branchB_level2.GetKeys()
+	if len(branchB_level2Keys) != 1 || branchB_level2Keys[0] != "branchB_level2_key" {
+		t.Errorf("Expected branchB_level2 to have ['branchB_level2_key'], got %v", branchB_level2Keys)
+	}
+
+	branchB_level4Keys := branchB_level4.GetKeys()
+	if len(branchB_level4Keys) != 1 || branchB_level4Keys[0] != "branchB_level4_key" {
+		t.Errorf("Expected branchB_level4 to have ['branchB_level4_key'], got %v", branchB_level4Keys)
+	}
+
+	// Verify branches are isolated
+	_, err = branchA_level1.GetData("branchB_level2_key")
+	if err == nil {
+		t.Fatal("branchA should not see branchB's data")
+	}
+	_, err = branchB_level1.GetData("branchA_key")
+	if err == nil {
+		t.Fatal("branchB should not see branchA's data")
+	}
+}
+
+// TestScopedLedger_DeepNesting_GetKeys tests GetKeys with complex nested structures
+func TestScopedLedger_DeepNesting_GetKeys(t *testing.T) {
+	l := NewLedger()
+	root := mustNewScoped(l, "root")
+	level1, err := root.Scoped("level1")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level2, err := level1.Scoped("level2")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+	level3, err := level2.Scoped("level3")
+	if err != nil {
+		t.Fatalf("Scoped failed: %v", err)
+	}
+
+	// Set multiple keys at root
+	err = root.SetData("root_key1", "value1")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = root.SetData("root_key2", "value2")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Set keys at level1
+	err = level1.SetData("level1_key1", "value1")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level1.SetData("level1_key2", "value2")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Set keys at level2
+	err = level2.SetData("level2_key", "value")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Set keys at level3
+	err = level3.SetData("level3_key1", "value1")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level3.SetData("level3_key2", "value2")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+	err = level3.SetData("level3_key3", "value3")
+	if err != nil {
+		t.Fatalf("SetData failed: %v", err)
+	}
+
+	// Verify GetKeys returns correct keys for each level
+	rootKeys := root.GetKeys()
+	expectedRootKeys := map[string]bool{"root_key1": true, "root_key2": true}
+	if len(rootKeys) != len(expectedRootKeys) {
+		t.Errorf("Expected root to have %d keys, got %d: %v", len(expectedRootKeys), len(rootKeys), rootKeys)
+	}
+	for _, key := range rootKeys {
+		if !expectedRootKeys[key] {
+			t.Errorf("Unexpected root key: %q", key)
+		}
+	}
+
+	level1Keys := level1.GetKeys()
+	expectedLevel1Keys := map[string]bool{"level1_key1": true, "level1_key2": true}
+	if len(level1Keys) != len(expectedLevel1Keys) {
+		t.Errorf("Expected level1 to have %d keys, got %d: %v", len(expectedLevel1Keys), len(level1Keys), level1Keys)
+	}
+	for _, key := range level1Keys {
+		if !expectedLevel1Keys[key] {
+			t.Errorf("Unexpected level1 key: %q", key)
+		}
+	}
+
+	level2Keys := level2.GetKeys()
+	if len(level2Keys) != 1 || level2Keys[0] != "level2_key" {
+		t.Errorf("Expected level2 to have ['level2_key'], got %v", level2Keys)
+	}
+
+	level3Keys := level3.GetKeys()
+	expectedLevel3Keys := map[string]bool{"level3_key1": true, "level3_key2": true, "level3_key3": true}
+	if len(level3Keys) != len(expectedLevel3Keys) {
+		t.Errorf("Expected level3 to have %d keys, got %d: %v", len(expectedLevel3Keys), len(level3Keys), level3Keys)
+	}
+	for _, key := range level3Keys {
+		if !expectedLevel3Keys[key] {
+			t.Errorf("Unexpected level3 key: %q", key)
+		}
+	}
+}

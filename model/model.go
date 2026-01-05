@@ -21,14 +21,23 @@ const (
 
 // ModelDescription contains metadata about a model.
 type ModelDescription struct {
-	Model            string        `json:"model"` // Needs to be the canonical provider ID of the model
-	Provider         string        `json:"provider"`
-	MaxContextTokens int           `json:"max_context_tokens"`
-	Description      string        `json:"description"`
-	Costs            CostsPerToken `json:"costs"`
+	Model            string        `json:"model" yaml:"model"` // Needs to be the canonical provider ID of the model
+	Provider         string        `json:"provider" yaml:"provider"`
+	MaxContextTokens int           `json:"max_context_tokens" yaml:"max_context_tokens"`
+	Description      string        `json:"description" yaml:"description"`
+	Costs            CostsPerToken `json:"costs" yaml:"costs"`
 	// CanUseTools indicates whether the model can use tools/functions
-	// If not, you need to use a ReAct wrapper to add it to the model.
-	CanUseTools bool `json:"can_use_tools"`
+	// If not, you need to use a ReAct wrapper (ToolExtractor- todo) or equivalent to add
+	// it to the model.
+	CanUseTools bool `json:"can_use_tools" yaml:"can_use_tools"`
+	// AcceptsFileTypes indicates what, if any, file / media types can
+	// be accepted by the model. Common MIME types include:
+	//   - "image/jpeg" for JPEG images
+	//   - "image/png" for PNG images
+	//   - "image/gif" for GIF images
+	//   - "image/webp" for WebP images
+	// If empty, the model only accepts text input.
+	AcceptsFileTypes []string `json:"accepts_file_types" yaml:"accepts_file_types"`
 }
 
 // Validate validates the model description.
@@ -47,23 +56,25 @@ func (m ModelDescription) Validate() error {
 
 // CostsPerToken contains the costs per token for a model.
 type CostsPerToken struct {
-	Input     float64 `json:"input"`
-	Output    float64 `json:"output"`
-	Reasoning float64 `json:"reasoning"` // Only some providers consider reasoning tokens separately
+	Input  float64 `json:"input" yaml:"input"`
+	Output float64 `json:"output" yaml:"output"`
 }
 
 // Cost calculates the total cost for the given token counts.
-func (c CostsPerToken) Cost(input, output, reasoning int) float64 {
-	return c.Input*float64(input) + c.Output*float64(output) + c.Reasoning*float64(reasoning)
+func (c CostsPerToken) Cost(input, output int) float64 {
+	return c.Input*float64(input) + c.Output*float64(output)
 }
 
 // Message represents a message in a conversation with a model.
 type Message struct {
-	Role    Role   `json:"role"`
-	Content string `json:"content"`
+	Role       Role   `json:"role"`
+	Content    string `json:"content"`
+	ToolCallID string `json:"tool_call_id,omitempty"` // For tool role messages, the ID of the tool call this is a response to
 }
 
-// Validate validates the message.
+// Validate validates the message by ensuring that the role
+// matches one we'd expect.
+// TODO - Do we need this?
 func (m Message) Validate() error {
 	if m.Role == "" {
 		return fmt.Errorf("%w: role is required", ErrInvalidMessage)
@@ -117,6 +128,7 @@ func (r CompletionRequest) Validate() error {
 
 // ToolCall represents the instance of calling a tool via the model
 type ToolCall struct {
+	ID        string         `json:"id,omitempty"` // Tool call ID from the provider (e.g., OpenAI)
 	Name      string         `json:"name"`
 	Arguments tool.Arguments `json:"arguments"`
 }
@@ -130,22 +142,20 @@ type CompletionResponse struct {
 
 // UsageStats contains token usage statistics for a model request.
 type UsageStats struct {
-	InputTokens     int `json:"input_tokens"`
-	OutputTokens    int `json:"output_tokens"`
-	ReasoningTokens int `json:"reasoning_tokens"`
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 // Total returns the total number of tokens used.
 func (u UsageStats) Total() int {
-	return u.InputTokens + u.OutputTokens + u.ReasoningTokens
+	return u.InputTokens + u.OutputTokens
 }
 
 // Add returns a new UsageStats with the sum of this and the other UsageStats.
 func (u UsageStats) Add(other UsageStats) UsageStats {
 	return UsageStats{
-		InputTokens:     u.InputTokens + other.InputTokens,
-		OutputTokens:    u.OutputTokens + other.OutputTokens,
-		ReasoningTokens: u.ReasoningTokens + other.ReasoningTokens,
+		InputTokens:  u.InputTokens + other.InputTokens,
+		OutputTokens: u.OutputTokens + other.OutputTokens,
 	}
 }
 

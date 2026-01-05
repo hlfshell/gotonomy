@@ -21,10 +21,14 @@ type Provider interface {
 	ListAvailableModels(ctx context.Context) ([]model.ModelDescription, error)
 
 	// ListAvailableEmbeddingModels returns a list of available embedding models.
-	ListAvailableEmbeddingModels(ctx context.Context) ([]embedding.ModelDescription, error)
+	ListAvailableEmbeddingModels(ctx context.Context) ([]embedding.ModelInfo, error)
 
 	// GetModel returns a model instance by name.
 	GetModel(ctx context.Context, modelName string) (model.Model, error)
+
+	// AddModel allows you to add a model instance by ModelDescription to prevent
+	// being limited to hard coded models
+	AddModel(ctx context.Context, model model.ModelDescription) error
 
 	// GetEmbeddingModel returns an embedding model instance by name.
 	GetEmbeddingModel(ctx context.Context, modelName string) (embedding.EmbeddingModel, error)

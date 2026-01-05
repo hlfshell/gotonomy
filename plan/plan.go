@@ -43,6 +43,7 @@ func (p *Plan) AddStep(step Step) {
 }
 
 // FindStep finds a step by ID. Returns a pointer to the step and true if found, or nil and false if not found.
+// TODO - the bool is kind of pointless get rid of it.
 func (p *Plan) FindStep(id string) (*Step, bool) {
 	for i := range p.Steps {
 		if p.Steps[i].ID == id {
@@ -68,11 +69,11 @@ func (p *Plan) NextSteps(completedSteps map[string]bool) []Step {
 // - Checks for circular dependencies (basic check)
 // - Recursively validates nested sub-plans
 func (p *Plan) Validate() error {
-	return p.validateWithContext(make(map[string]bool))
+	return p.validateRecursive(make(map[string]bool))
 }
 
-// validateWithContext validates the plan with a context to track visited plans and prevent infinite recursion.
-func (p *Plan) validateWithContext(visitedPlans map[string]bool) error {
+// validateRecursive validates the plan with a context to track visited plans and prevent infinite recursion.
+func (p *Plan) validateRecursive(visitedPlans map[string]bool) error {
 	if p == nil {
 		return nil
 	}
@@ -97,7 +98,7 @@ func (p *Plan) validateWithContext(visitedPlans map[string]bool) error {
 
 		// Recursively validate nested sub-plans
 		if step.Plan != nil {
-			if err := step.Plan.validateWithContext(visitedPlans); err != nil {
+			if err := step.Plan.validateRecursive(visitedPlans); err != nil {
 				return fmt.Errorf("step %s has invalid sub-plan: %w", step.ID, err)
 			}
 		}
@@ -163,6 +164,7 @@ func (p *Plan) validateWithContext(visitedPlans map[string]bool) error {
 
 // GetExecutionOrder returns steps in a valid execution order (topological sort).
 // Returns an error if the plan has circular dependencies or is invalid.
+// TODO - why is this needed?
 func (p *Plan) GetExecutionOrder() ([]Step, error) {
 	if err := p.Validate(); err != nil {
 		return nil, fmt.Errorf("plan validation failed: %w", err)
@@ -227,9 +229,9 @@ func (p *Plan) GetExecutionOrder() ([]Step, error) {
 	return result, nil
 }
 
-// GetAllStepsRecursive returns all steps in the plan and all nested sub-plans, flattened.
+// GetAllSteps returns all steps in the plan and all nested sub-plans, flattened.
 // The result includes steps from the current plan and all nested sub-plans at any depth.
-func (p *Plan) GetAllStepsRecursive() []*Step {
+func (p *Plan) GetAllSteps() []*Step {
 	var allSteps []*Step
 	p.collectStepsRecursive(&allSteps)
 	return allSteps
@@ -270,7 +272,7 @@ func (p *Plan) GetMaxDepth() int {
 }
 
 // planSerializable is a serializable version of Plan that uses step IDs instead of pointers.
-// This is used for JSON marshaling/unmarshaling.
+// This is used for JSON marshaling/unmarshaling to make serialization possible.
 type planSerializable struct {
 	ID           string             `json:"id"`
 	Steps        []stepSerializable `json:"steps"`
@@ -422,7 +424,7 @@ func (p *Plan) AddStepByID(id, name, instruction, expectation string, dependency
 	return nil
 }
 
-// ToText returns a human-friendly text representation of the plan.
+// ToText returns a human-readable text representation of the plan.
 func (p *Plan) ToText() string {
 	if p == nil {
 		return ""

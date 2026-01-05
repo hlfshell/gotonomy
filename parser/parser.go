@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/hlfshell/structured-parse/go/structuredparse"
-	"gopkg.in/yaml.v3"
 )
 
 type Parser[T any] interface {
@@ -176,22 +175,25 @@ func (jp *JSONParser) Parse(input string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// ##### YAML Parser #####
+// #### Typed ####
 
-// YAMLParser parses YAML strings into map[string]interface{}.
-type YAMLParser struct{}
+// JSONTypedParser parses JSON strings into a specific type T using JSON struct tags.
+// It implements the Parser[T] interface for any type T.
+type JSONTypedParser[T any] struct{}
 
-// NewYAMLParser creates a new YAML parser.
-func NewYAMLParser() *YAMLParser {
-	return &YAMLParser{}
+// NewJSONTypedParser creates a new typed JSON parser that parses JSON into type T.
+// The parser uses standard JSON unmarshaling which automatically respects JSON struct tags.
+func NewJSONTypedParser[T any]() *JSONTypedParser[T] {
+	return &JSONTypedParser[T]{}
 }
 
-// Parse parses a YAML string into a map[string]interface{}.
-func (yp *YAMLParser) Parse(input string) (map[string]interface{}, error) {
-	var result map[string]interface{}
-	err := yaml.Unmarshal([]byte(input), &result)
+// Parse parses a JSON string into type T using JSON struct tags.
+// It returns the parsed data and any errors encountered during parsing.
+func (jtp *JSONTypedParser[T]) Parse(input string) (T, error) {
+	var result T
+	err := json.Unmarshal([]byte(input), &result)
 	if err != nil {
-		return nil, err
+		return result, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 	return result, nil
 }

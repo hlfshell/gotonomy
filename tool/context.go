@@ -7,7 +7,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hlfshell/gotonomy/data/ledger"
-	scopedledger "github.com/hlfshell/gotonomy/data/ledger/scoped_ledger"
 )
 
 type ContextID string
@@ -30,9 +29,9 @@ type Context struct {
 	// diff creations
 
 	data        *ledger.Ledger
-	globalData  *scopedledger.ScopedLedger
-	contextData *scopedledger.ScopedLedger
-	scopedData  map[string]*scopedledger.ScopedLedger
+	globalData  *ledger.ScopedLedger
+	contextData *ledger.ScopedLedger
+	scopedData  map[string]*ledger.ScopedLedger
 
 	stats Stats
 
@@ -88,34 +87,38 @@ func (c *Context) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (c *Context) Data() *scopedledger.ScopedLedger {
+func (c *Context) Data() *ledger.ScopedLedger {
 	return c.contextData
 }
 
-func (c *Context) GlobalData() *scopedledger.ScopedLedger {
+func (c *Context) GlobalData() *ledger.ScopedLedger {
 	return c.globalData
 }
 
 // ScopedData returns a scoped ledger globally - the intent
 // being that tools that know to look for data within a known
 // scope can utilize this as a form of controlled data sharing
-func (c *Context) ScopedData(scope string) *scopedledger.ScopedLedger {
+func (c *Context) ScopedData(scope string) (*ledger.ScopedLedger, error) {
 	c.mu.RLock()
 	sl, ok := c.scopedData[scope]
 	c.mu.RUnlock()
 	if ok {
-		return sl
+		return sl, nil
 	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Double-check after acquiring write lock
 	if sl, ok := c.scopedData[scope]; ok {
-		return sl
+		return sl, nil
 	}
-	sl = scopedledger.NewScopedLedger(c.data, scope)
+	var err error
+	sl, err = ledger.NewScoped(c.data, scope)
+	if err != nil {
+		return nil, err
+	}
 	c.scopedData[scope] = sl
-	return sl
+	return sl, nil
 }
 
 // Stats returns a pointer to the node's stats.
@@ -183,7 +186,7 @@ func blankContext(e *Execution) *Context {
 		data:        e.data,       // shared execution ledger
 		globalData:  e.globalData, // shared global scoped ledger
 		contextData: nil,          // will be set in fillBlankContext
-		scopedData:  make(map[string]*scopedledger.ScopedLedger),
+		scopedData:  make(map[string]*ledger.ScopedLedger),
 		stats:       Stats{},
 		mu:          sync.RWMutex{},
 	}
@@ -198,7 +201,12 @@ func fillBlankContext(c *Context, tool Tool, args Arguments) {
 
 	// Initialize per-node scope
 	scope := fmt.Sprintf("%s:%s", c.toolName, c.id)
-	c.contextData = scopedledger.NewScopedLedger(c.data, scope)
+	var err error
+	c.contextData, err = ledger.NewScoped(c.data, scope)
+	if err != nil {
+		// This should not happen in normal usage, but handle it gracefully
+		panic(fmt.Sprintf("failed to create scoped ledger: %v", err))
+	}
 
 	// Initialize children slice if needed
 	if c.children == nil {
