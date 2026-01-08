@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/hlfshell/structured-parse/go/structuredparse"
+	structuredparse "github.com/hlfshell/structured-parse/go"
 )
 
 // Test types for parsing

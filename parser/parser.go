@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hlfshell/structured-parse/go/structuredparse"
+	structuredparse "github.com/hlfshell/structured-parse/go"
 )
 
 type Parser[T any] interface {

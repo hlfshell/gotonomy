@@ -1,11 +1,4 @@
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/hlfshell/go-arkaine-parser v0.0.1 h1:NxY0nRau3LxrtLSL7BqTYWWjUMQF9Udl2OV4Xkfr5G0=
-github.com/hlfshell/go-arkaine-parser v0.0.1/go.mod h1:xRoQRDGymIfek7EuoFrQR3gAASjKNHZb2/TKuFWVXok=
-github.com/hlfshell/structured-parse v0.0.0-20251118073123-fe8df9ae0d79 h1:fIhQeT2sf0+z+y4A+cuTP8Iw7vTBFVyxU5oxRGo2YoU=
-github.com/hlfshell/structured-parse v0.0.0-20251118073123-fe8df9ae0d79/go.mod h1:RfFBcv1Do9BrUvV6cVCD+AlN8nl6c66fhvzJX9AY+XE=
-github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
-github.com/pelletier/go-toml/v2 v2.2.4/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
-gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
-gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+github.com/hlfshell/structured-parse/go v1.0.3 h1:0tUNLFhQKPiIF//N4ceFvmzqGPb2vFEvFDXZCOwfnsQ=
+github.com/hlfshell/structured-parse/go v1.0.3/go.mod h1:bfb1ixdmXX9TREnLhqsC22BefJ4/13X7ZfE/ci/0Gxk=
