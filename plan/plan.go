@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -54,11 +55,12 @@ func (p *Plan) FindStep(id string) (*Step, bool) {
 }
 
 // NextSteps returns all steps that are ready to execute (have no dependencies or all dependencies are satisfied).
-func (p *Plan) NextSteps(completedSteps map[string]bool) []Step {
-	var ready []Step
-	for _, step := range p.Steps {
-		if step.AllDependenciesSatisfied(completedSteps) {
-			ready = append(ready, step)
+// NextSteps returns pointers to steps that are ready to execute (all dependencies satisfied).
+func (p *Plan) NextSteps(completedSteps map[string]bool) []*Step {
+	var ready []*Step
+	for i := range p.Steps {
+		if p.Steps[i].AllDependenciesSatisfied(completedSteps) {
+			ready = append(ready, &p.Steps[i])
 		}
 	}
 	return ready
@@ -444,4 +446,30 @@ func (p *Plan) ToText() string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+func (p *Plan) ToFile(filepath string) error {
+	if p == nil {
+		return fmt.Errorf("plan is nil")
+	}
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal plan: %w", err)
+	}
+	if err := os.WriteFile(filepath, b, 0o644); err != nil {
+		return fmt.Errorf("write plan file: %w", err)
+	}
+	return nil
+}
+
+func FromFile(filepath string) (*Plan, error) {
+	b, err := os.ReadFile(filepath)
+	if err != nil {
+		return nil, fmt.Errorf("read plan file: %w", err)
+	}
+	var p Plan
+	if err := json.Unmarshal(b, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal plan: %w", err)
+	}
+	return &p, nil
 }

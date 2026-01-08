@@ -1,24 +1,32 @@
 package planning
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
-	"github.com/hlfshell/gogentic/pkg/agent"
-	"github.com/hlfshell/gogentic/pkg/agent/plan"
-	"github.com/hlfshell/gogentic/pkg/assets"
-	"github.com/hlfshell/gogentic/pkg/model"
-	"github.com/hlfshell/gogentic/pkg/prompt"
+	"github.com/hlfshell/gotonomy/assets"
+	"github.com/hlfshell/gotonomy/model"
+	"github.com/hlfshell/gotonomy/plan"
+	"github.com/hlfshell/gotonomy/prompt"
+	"github.com/hlfshell/gotonomy/tool"
 )
 
-// PlannerAgent is an agent that creates structured plans from high-level objectives.
+// PlannerAgent creates structured plans from high-level objectives.
+//
+// NOTE: This is intentionally a lightweight “agent”:
+// - It does not run the iterative tool-calling loop from `agent.Agent`.
+// - It renders a planning prompt, calls `model.Model.Complete`, and parses a `plan.Plan`.
 type PlannerAgent struct {
-	*agent.Agent
-	// promptTemplate is the cached prompt template for planning
+	id          string
+	name        string
+	description string
+
+	model       model.Model
+	temperature float32
+
+	// promptTemplate is the cached prompt template for planning.
 	promptTemplate *prompt.Template
 }
 
@@ -50,9 +58,15 @@ type PlannerResult struct {
 	UsageStats model.UsageStats
 }
 
+// Config configures a PlannerAgent.
+type Config struct {
+	Model       model.Model
+	Temperature float32
+}
+
 // NewPlannerAgent creates a new planner agent with the default embedded prompt template.
-// The prompt template is loaded from the embedded assets, so no external files are required.
-func NewPlannerAgent(id, name, description string, config agent.AgentConfig) (*PlannerAgent, error) {
+// The prompt template is loaded from embedded assets, so no external files are required.
+func NewPlannerAgent(id, name, description string, config Config) (*PlannerAgent, error) {
 	if id == "" {
 		id = uuid.New().String()
 	}
@@ -62,13 +76,20 @@ func NewPlannerAgent(id, name, description string, config agent.AgentConfig) (*P
 	if description == "" {
 		description = "An agent that creates structured plans from high-level objectives"
 	}
-
-	// Create the base agent
-	baseAgent := agent.NewAgent(id, name, description, config)
+	if config.Model == nil {
+		return nil, fmt.Errorf("planner config: Model is required")
+	}
+	if config.Temperature < 0 || config.Temperature > 1 {
+		return nil, fmt.Errorf("planner config: Temperature must be between 0 and 1")
+	}
 
 	// Create the planner agent
 	plannerAgent := &PlannerAgent{
-		Agent: baseAgent,
+		id:          id,
+		name:        name,
+		description: description,
+		model:       config.Model,
+		temperature: config.Temperature,
 	}
 
 	// Load the default embedded prompt template
@@ -107,8 +128,16 @@ func (a *PlannerAgent) SetPromptTemplate(tmpl *prompt.Template) {
 	a.promptTemplate = tmpl
 }
 
+func (a *PlannerAgent) ID() string { return a.id }
+func (a *PlannerAgent) Name() string {
+	return a.name
+}
+func (a *PlannerAgent) Description() string {
+	return a.description
+}
+
 // Plan creates a plan from the given objective and optional tools.
-func (a *PlannerAgent) Plan(ctx context.Context, input PlannerInput) (*PlannerResult, error) {
+func (a *PlannerAgent) Plan(ctx *tool.Context, input PlannerInput) (*PlannerResult, error) {
 	if a.promptTemplate == nil {
 		return nil, fmt.Errorf("prompt template not loaded - call LoadPromptTemplate first")
 	}
@@ -126,31 +155,24 @@ func (a *PlannerAgent) Plan(ctx context.Context, input PlannerInput) (*PlannerRe
 		return nil, fmt.Errorf("failed to render prompt template: %w", err)
 	}
 
-	// Get the agent config
-	config := a.Config()
-
 	// Build the model messages
 	messages := []model.Message{
 		{
-			Role: "user",
-			Content: []model.Content{
-				{
-					Type: model.TextContent,
-					Text: renderedPrompt,
-				},
-			},
+			Role:    model.RoleUser,
+			Content: renderedPrompt,
 		},
 	}
 
 	// Create the completion request
 	request := model.CompletionRequest{
-		Messages:    messages,
-		Temperature: config.Temperature,
-		MaxTokens:   config.MaxTokens,
+		Messages: messages,
+		Config: model.ModelConfig{
+			Temperature: a.temperature,
+		},
 	}
 
 	// Call the model
-	response, err := config.Model.Complete(ctx, request)
+	response, err := a.model.Complete(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get completion from model: %w", err)
 	}
@@ -213,7 +235,7 @@ func (a *PlannerAgent) buildPlanFromResponse(resp planResponse) (*plan.Plan, err
 	// Create a new plan
 	newPlan := plan.NewPlan("")
 
-	// Build a map to track steps as we create them
+	// Build a map to track step pointers within this plan.
 	stepMap := make(map[string]*plan.Step)
 
 	// First pass: create all steps without dependencies
@@ -238,8 +260,12 @@ func (a *PlannerAgent) buildPlanFromResponse(resp planResponse) (*plan.Plan, err
 			subPlan,
 		)
 
-		stepMap[stepResp.ID] = &newStep
 		newPlan.AddStep(newStep)
+	}
+
+	// Now that steps are in the slice, map IDs to the slice-backed pointers.
+	for i := range newPlan.Steps {
+		stepMap[newPlan.Steps[i].ID] = &newPlan.Steps[i]
 	}
 
 	// Second pass: set up dependencies using the map
@@ -281,7 +307,7 @@ func cleanJSONResponse(response string) string {
 }
 
 // Replan creates a revised plan based on feedback or new information.
-func (a *PlannerAgent) Replan(ctx context.Context, currentPlan *plan.Plan, feedback string, input PlannerInput) (*PlannerResult, error) {
+func (a *PlannerAgent) Replan(ctx *tool.Context, currentPlan *plan.Plan, feedback string, input PlannerInput) (*PlannerResult, error) {
 	if a.promptTemplate == nil {
 		return nil, fmt.Errorf("prompt template not loaded - call LoadPromptTemplate first")
 	}
@@ -307,65 +333,4 @@ func (a *PlannerAgent) Replan(ctx context.Context, currentPlan *plan.Plan, feedb
 	result.Plan.RevisionDiff = &diff
 
 	return result, nil
-}
-
-// Execute implements the Agent interface for PlannerAgent.
-func (a *PlannerAgent) ExecuteAgent(ctx context.Context, args agent.Arguments, options *agent.AgentOptions) (agent.AgentResult, error) {
-	// Extract planning input from arguments
-	objective := ""
-	if objVal, ok := args["input"]; ok {
-		if objStr, ok := objVal.(string); ok {
-			objective = objStr
-		}
-	}
-	input := PlannerInput{
-		Objective: objective,
-	}
-
-	// Check for additional inputs
-	if tools, ok := args["tools"].([]ToolInfo); ok {
-		input.Tools = tools
-	}
-	if context, ok := args["context"].(string); ok {
-		input.Context = context
-	}
-
-	// Record start time
-	startTime := time.Now()
-
-	// Create the plan
-	result, err := a.Plan(ctx, input)
-	if err != nil {
-		return agent.AgentResult{}, fmt.Errorf("planning failed: %w", err)
-	}
-
-	// Record end time
-	endTime := time.Now()
-
-	// Convert the plan to text for the output
-	planText := result.Plan.ToText()
-
-	// Build the agent result
-	agentResult := agent.AgentResult{
-		Output: planText,
-		AdditionalOutputs: map[string]interface{}{
-			"plan":         result.Plan,
-			"raw_response": result.RawResponse,
-		},
-		Conversation: nil, // Conversation management handled separately
-		UsageStats:   result.UsageStats,
-		ExecutionStats: agent.ExecutionStats{
-			StartTime:  startTime,
-			EndTime:    endTime,
-			ToolCalls:  0, // Planner doesn't use tools
-			Iterations: 1,
-		},
-		Message: agent.Message{
-			Role:      "assistant",
-			Content:   planText,
-			Timestamp: endTime,
-		},
-	}
-
-	return agentResult, nil
 }

@@ -1,25 +1,31 @@
 package planning
 
 import (
-	"context"
-	"encoding/json"
 	"testing"
-	"time"
 
-	"github.com/hlfshell/gogentic/pkg/agent"
-	"github.com/hlfshell/gogentic/pkg/agent/plan"
-	"github.com/hlfshell/gogentic/pkg/model"
-	"github.com/hlfshell/gogentic/pkg/prompt"
+	"github.com/hlfshell/gotonomy/model"
+	"github.com/hlfshell/gotonomy/plan"
+	"github.com/hlfshell/gotonomy/prompt"
+	"github.com/hlfshell/gotonomy/tool"
 )
 
-// MockModel is a mock implementation of the Model interface for testing.
 type MockModel struct {
 	Response      string
 	ResponseError error
-	CompleteFunc  func(ctx context.Context, req model.CompletionRequest) (model.CompletionResponse, error)
+	CompleteFunc  func(ctx *tool.Context, req model.CompletionRequest) (model.CompletionResponse, error)
 }
 
-func (m *MockModel) Complete(ctx context.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
+func (m *MockModel) Description() model.ModelDescription {
+	return model.ModelDescription{
+		Model:            "mock-model",
+		Provider:         "mock",
+		MaxContextTokens: 8192,
+		Description:      "Mock model for tests",
+		CanUseTools:      true,
+	}
+}
+
+func (m *MockModel) Complete(ctx *tool.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
 	if m.CompleteFunc != nil {
 		return m.CompleteFunc(ctx, req)
 	}
@@ -29,35 +35,16 @@ func (m *MockModel) Complete(ctx context.Context, req model.CompletionRequest) (
 	return model.CompletionResponse{
 		Text: m.Response,
 		UsageStats: model.UsageStats{
-			PromptTokens:     100,
-			CompletionTokens: 200,
-			TotalTokens:      300,
+			InputTokens:  100,
+			OutputTokens: 200,
 		},
 	}, nil
 }
 
-func (m *MockModel) CompleteStream(ctx context.Context, req model.CompletionRequest, handler model.StreamHandler) error {
-	return nil
-}
-
-func (m *MockModel) GetInfo() model.ModelInfo {
-	return model.ModelInfo{
-		Name:            "mock-model",
-		Provider:        "mock",
-		SupportsText:    true,
-		CanGenerateText: true,
-	}
-}
-
-func (m *MockModel) SupportsContentType(contentType model.ContentType) bool {
-	return contentType == model.TextContent
-}
-
 func TestNewPlannerAgent(t *testing.T) {
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       &MockModel{},
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("", "", "", config)
@@ -84,10 +71,9 @@ func TestNewPlannerAgent(t *testing.T) {
 }
 
 func TestPlannerAgent_SetPromptTemplate(t *testing.T) {
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       &MockModel{},
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -152,10 +138,9 @@ func TestPlannerAgent_Plan_Success(t *testing.T) {
 		Response: mockPlanJSON,
 	}
 
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -170,7 +155,7 @@ func TestPlannerAgent_Plan_Success(t *testing.T) {
 		Objective: "Build a web application",
 	}
 
-	result, err := planner.Plan(context.Background(), input)
+	result, err := planner.Plan(nil, input)
 	if err != nil {
 		t.Fatalf("Failed to create plan: %v", err)
 	}
@@ -202,7 +187,7 @@ func TestPlannerAgent_Plan_Success(t *testing.T) {
 	}
 
 	// Verify usage stats
-	if result.UsageStats.TotalTokens == 0 {
+	if result.UsageStats.Total() == 0 {
 		t.Error("Expected non-zero usage stats")
 	}
 }
@@ -250,10 +235,9 @@ func TestPlannerAgent_Plan_WithNestedSubPlan(t *testing.T) {
 		Response: mockPlanJSON,
 	}
 
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -267,7 +251,7 @@ func TestPlannerAgent_Plan_WithNestedSubPlan(t *testing.T) {
 		Objective: "Build a web application with detailed setup",
 	}
 
-	result, err := planner.Plan(context.Background(), input)
+	result, err := planner.Plan(nil, input)
 	if err != nil {
 		t.Fatalf("Failed to create plan: %v", err)
 	}
@@ -289,6 +273,11 @@ func TestPlannerAgent_Plan_WithNestedSubPlan(t *testing.T) {
 	if len(result.Plan.Steps[0].Plan.Steps[1].Dependencies) != 1 {
 		t.Errorf("Expected sub2 to have 1 dependency")
 	}
+
+	// And the dependency pointer should point to the sub-plan slice element.
+	if result.Plan.Steps[0].Plan.Steps[1].Dependencies[0] != &result.Plan.Steps[0].Plan.Steps[0] {
+		t.Errorf("Expected dependency pointer to point at the sub-plan step instance")
+	}
 }
 
 func TestPlannerAgent_Plan_WithTools(t *testing.T) {
@@ -308,10 +297,9 @@ func TestPlannerAgent_Plan_WithTools(t *testing.T) {
 		Response: mockPlanJSON,
 	}
 
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -332,7 +320,7 @@ func TestPlannerAgent_Plan_WithTools(t *testing.T) {
 		},
 	}
 
-	result, err := planner.Plan(context.Background(), input)
+	result, err := planner.Plan(nil, input)
 	if err != nil {
 		t.Fatalf("Failed to create plan: %v", err)
 	}
@@ -352,10 +340,9 @@ func TestPlannerAgent_Plan_NoTemplate(t *testing.T) {
 		Response: "{}",
 	}
 
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -370,7 +357,7 @@ func TestPlannerAgent_Plan_NoTemplate(t *testing.T) {
 		Objective: "Build something",
 	}
 
-	_, err = planner.Plan(context.Background(), input)
+	_, err = planner.Plan(nil, input)
 	if err == nil {
 		t.Error("Expected error when template not loaded")
 	}
@@ -406,10 +393,9 @@ func TestPlannerAgent_Replan(t *testing.T) {
 		Response: mockPlanJSON,
 	}
 
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -425,7 +411,7 @@ func TestPlannerAgent_Replan(t *testing.T) {
 
 	feedback := "The initial plan is too simple, we need more steps"
 
-	result, err := planner.Replan(context.Background(), initialPlan, feedback, input)
+	result, err := planner.Replan(nil, initialPlan, feedback, input)
 	if err != nil {
 		t.Fatalf("Failed to replan: %v", err)
 	}
@@ -450,64 +436,6 @@ func TestPlannerAgent_Replan(t *testing.T) {
 	// Check that the diff shows additions
 	if len(result.Plan.RevisionDiff.Steps.Added) == 0 {
 		t.Error("Expected some added steps in the diff")
-	}
-}
-
-func TestPlannerAgent_Execute(t *testing.T) {
-	mockPlanJSON := `{
-		"steps": [
-			{
-				"id": "step1",
-				"name": "Step 1",
-				"instruction": "Do something",
-				"expectation": "Something done",
-				"dependencies": []
-			}
-		]
-	}`
-
-	mockModel := &MockModel{
-		Response: mockPlanJSON,
-	}
-
-	config := agent.AgentConfig{
-		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
-	}
-
-	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
-	if err != nil {
-		t.Fatalf("Failed to create planner agent: %v", err)
-	}
-
-	// Planner now has embedded template loaded automatically
-
-	params := agent.Arguments{
-		"input": "Create a simple plan",
-	}
-
-	result, err := planner.ExecuteAgent(context.Background(), params, nil)
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
-	}
-
-	if result.Output == "" {
-		t.Error("Expected non-empty output")
-	}
-
-	// Check that the plan is in additional outputs
-	if result.AdditionalOutputs == nil {
-		t.Fatal("Expected additional outputs")
-	}
-
-	planOutput, ok := result.AdditionalOutputs["plan"].(*plan.Plan)
-	if !ok {
-		t.Fatal("Expected plan in additional outputs")
-	}
-
-	if len(planOutput.Steps) != 1 {
-		t.Errorf("Expected 1 step, got %d", len(planOutput.Steps))
 	}
 }
 
@@ -550,10 +478,9 @@ func TestCleanJSONResponse(t *testing.T) {
 }
 
 func TestParsePlanFromResponse_InvalidJSON(t *testing.T) {
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       &MockModel{},
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -569,10 +496,9 @@ func TestParsePlanFromResponse_InvalidJSON(t *testing.T) {
 }
 
 func TestParsePlanFromResponse_InvalidPlan(t *testing.T) {
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       &MockModel{},
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -622,21 +548,20 @@ func TestPlannerAgent_Plan_VerifiesValidPlan(t *testing.T) {
 
 	callCount := 0
 	mockModel := &MockModel{
-		CompleteFunc: func(ctx context.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
+		CompleteFunc: func(ctx *tool.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
 			callCount++
 			return model.CompletionResponse{
 				Text: mockPlanJSON,
 				UsageStats: model.UsageStats{
-					TotalTokens: 100,
+					InputTokens: 100,
 				},
 			}, nil
 		},
 	}
 
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -650,7 +575,7 @@ func TestPlannerAgent_Plan_VerifiesValidPlan(t *testing.T) {
 		Objective: "Test objective",
 	}
 
-	result, err := planner.Plan(context.Background(), input)
+	result, err := planner.Plan(nil, input)
 	if err != nil {
 		t.Fatalf("Failed to create plan: %v", err)
 	}
@@ -667,10 +592,9 @@ func TestPlannerAgent_Plan_VerifiesValidPlan(t *testing.T) {
 }
 
 func TestBuildPlanFromResponse_MissingDependency(t *testing.T) {
-	config := agent.AgentConfig{
+	config := Config{
 		Model:       &MockModel{},
-		Temperature: 0.7,
-		MaxTokens:   2000,
+		Temperature: 0.2,
 	}
 
 	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
@@ -711,212 +635,4 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
-}
-
-func TestPlanSerialization_RoundTrip(t *testing.T) {
-	// Test that a plan can be serialized and deserialized correctly
-	mockPlanJSON := `{
-		"steps": [
-			{
-				"id": "step1",
-				"name": "Step 1",
-				"instruction": "Do something",
-				"expectation": "Something done",
-				"dependencies": []
-			},
-			{
-				"id": "step2",
-				"name": "Step 2",
-				"instruction": "Do something else",
-				"expectation": "Something else done",
-				"dependencies": ["step1"]
-			}
-		]
-	}`
-
-	config := agent.AgentConfig{
-		Model:       &MockModel{Response: mockPlanJSON},
-		Temperature: 0.7,
-		MaxTokens:   2000,
-	}
-
-	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
-	if err != nil {
-		t.Fatalf("Failed to create planner agent: %v", err)
-	}
-
-	// Planner now has embedded template loaded automatically
-
-	input := PlannerInput{
-		Objective: "Test objective",
-	}
-
-	result, err := planner.Plan(context.Background(), input)
-	if err != nil {
-		t.Fatalf("Failed to create plan: %v", err)
-	}
-
-	// Serialize the plan
-	data, err := json.Marshal(result.Plan)
-	if err != nil {
-		t.Fatalf("Failed to marshal plan: %v", err)
-	}
-
-	// Deserialize the plan
-	var deserializedPlan plan.Plan
-	if err := json.Unmarshal(data, &deserializedPlan); err != nil {
-		t.Fatalf("Failed to unmarshal plan: %v", err)
-	}
-
-	// Verify the deserialized plan
-	if len(deserializedPlan.Steps) != 2 {
-		t.Errorf("Expected 2 steps, got %d", len(deserializedPlan.Steps))
-	}
-
-	if len(deserializedPlan.Steps[1].Dependencies) != 1 {
-		t.Errorf("Expected 1 dependency for step2, got %d", len(deserializedPlan.Steps[1].Dependencies))
-	}
-
-	if deserializedPlan.Steps[1].Dependencies[0].ID != "step1" {
-		t.Errorf("Expected step2 to depend on step1")
-	}
-}
-
-func TestPlannerAgent_Execute_WithAdditionalInputs(t *testing.T) {
-	mockPlanJSON := `{
-		"steps": [
-			{
-				"id": "step1",
-				"name": "Step 1",
-				"instruction": "Do something",
-				"expectation": "Something done",
-				"dependencies": []
-			}
-		]
-	}`
-
-	mockModel := &MockModel{
-		Response: mockPlanJSON,
-	}
-
-	config := agent.AgentConfig{
-		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
-	}
-
-	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
-	if err != nil {
-		t.Fatalf("Failed to create planner agent: %v", err)
-	}
-
-	// Planner now has embedded template loaded automatically
-
-	params := agent.Arguments{
-		"input": "Create a plan",
-		"context": "This is additional context",
-		"tools": []ToolInfo{
-			{
-				Name:        "tool1",
-				Description: "A test tool",
-			},
-		},
-	}
-
-	result, err := planner.ExecuteAgent(context.Background(), params, nil)
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
-	}
-
-	if result.Output == "" {
-		t.Error("Expected non-empty output")
-	}
-
-	// Verify execution stats
-	if result.ExecutionStats.StartTime.IsZero() {
-		t.Error("Expected non-zero start time")
-	}
-
-	if result.ExecutionStats.EndTime.IsZero() {
-		t.Error("Expected non-zero end time")
-	}
-
-	if result.ExecutionStats.Iterations != 1 {
-		t.Errorf("Expected 1 iteration, got %d", result.ExecutionStats.Iterations)
-	}
-}
-
-func TestPlannerAgent_TimestampsAndStats(t *testing.T) {
-	mockPlanJSON := `{
-		"steps": [
-			{
-				"id": "step1",
-				"name": "Step 1",
-				"instruction": "Do something",
-				"expectation": "Something done",
-				"dependencies": []
-			}
-		]
-	}`
-
-	mockModel := &MockModel{
-		CompleteFunc: func(ctx context.Context, req model.CompletionRequest) (model.CompletionResponse, error) {
-			// Simulate some processing time
-			time.Sleep(10 * time.Millisecond)
-			return model.CompletionResponse{
-				Text: mockPlanJSON,
-				UsageStats: model.UsageStats{
-					PromptTokens:     150,
-					CompletionTokens: 250,
-					TotalTokens:      400,
-				},
-			}, nil
-		},
-	}
-
-	config := agent.AgentConfig{
-		Model:       mockModel,
-		Temperature: 0.7,
-		MaxTokens:   2000,
-	}
-
-	planner, err := NewPlannerAgent("test-planner", "Test Planner", "A test planner", config)
-	if err != nil {
-		t.Fatalf("Failed to create planner agent: %v", err)
-	}
-
-	// Planner now has embedded template loaded automatically
-
-	params := agent.Arguments{
-		"input": "Create a plan",
-	}
-
-	result, err := planner.ExecuteAgent(context.Background(), params, nil)
-	if err != nil {
-		t.Fatalf("Failed to execute: %v", err)
-	}
-
-	// Verify usage stats
-	if result.UsageStats.PromptTokens != 150 {
-		t.Errorf("Expected 150 prompt tokens, got %d", result.UsageStats.PromptTokens)
-	}
-
-	if result.UsageStats.CompletionTokens != 250 {
-		t.Errorf("Expected 250 completion tokens, got %d", result.UsageStats.CompletionTokens)
-	}
-
-	if result.UsageStats.TotalTokens != 400 {
-		t.Errorf("Expected 400 total tokens, got %d", result.UsageStats.TotalTokens)
-	}
-
-	// Verify timestamps
-	if result.ExecutionStats.EndTime.Before(result.ExecutionStats.StartTime) {
-		t.Error("End time should be after start time")
-	}
-
-	// Verify the plan was created at the right time
-	planOutput := result.AdditionalOutputs["plan"].(*plan.Plan)
-	if planOutput.CreatedAt.IsZero() {
-		t.Error("Plan creation time should not be zero")
-	}
 }

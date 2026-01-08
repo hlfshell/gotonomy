@@ -1,4 +1,4 @@
-// Package assets provides embedded asset files for the gogentic library.
+// Package assets provides embedded asset files for the gotonomy library.
 // Prompt templates and other static assets are embedded at compile time
 // using Go's embed directive, making them available without external file access.
 package assets
@@ -9,7 +9,7 @@ import (
 	"io/fs"
 	"path/filepath"
 
-	"github.com/hlfshell/gogentic/pkg/prompt"
+	"github.com/hlfshell/gotonomy/prompt"
 )
 
 // Prompts embeds all prompt template files from the prompts directory.
@@ -20,6 +20,9 @@ var Prompts embed.FS
 // PromptNames contains the names of all available embedded prompts.
 var PromptNames = []string{
 	"planner.prompt",
+	"step.prompt",
+	"judge.prompt",
+	"escalation.prompt",
 }
 
 // LoadPrompt loads an embedded prompt template by name.

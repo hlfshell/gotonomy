@@ -278,3 +278,56 @@ func TestNestedPlanSerialization(t *testing.T) {
 		t.Error("Sub-plan should be restored with its steps")
 	}
 }
+
+func TestNestedPlanSerialization_DependencyPointers(t *testing.T) {
+	// Ensure that dependency pointers inside a nested sub-plan are restored correctly.
+	parent := NewPlan("parent")
+
+	sub := NewPlan("sub")
+	sub1 := NewStep("sub1", "Sub 1", "Do sub1", "sub1 done", nil, nil)
+	sub2 := NewStep("sub2", "Sub 2", "Do sub2", "sub2 done", []*Step{&sub1}, nil)
+	sub.AddStep(sub1)
+	sub.AddStep(sub2)
+
+	parentStep := NewStep("step1", "Parent Step", "Do parent", "parent done", nil, sub)
+	parent.AddStep(parentStep)
+
+	// Serialize
+	data, err := json.Marshal(parent)
+	if err != nil {
+		t.Fatalf("Failed to marshal plan: %v", err)
+	}
+
+	// Deserialize
+	var unmarshaled Plan
+	if err := json.Unmarshal(data, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal plan: %v", err)
+	}
+
+	if len(unmarshaled.Steps) != 1 {
+		t.Fatalf("Expected 1 parent step, got %d", len(unmarshaled.Steps))
+	}
+	if unmarshaled.Steps[0].Plan == nil {
+		t.Fatal("Expected parent step to have a sub-plan")
+	}
+	if len(unmarshaled.Steps[0].Plan.Steps) != 2 {
+		t.Fatalf("Expected 2 sub-steps, got %d", len(unmarshaled.Steps[0].Plan.Steps))
+	}
+
+	usub := unmarshaled.Steps[0].Plan
+	if len(usub.Steps[1].Dependencies) != 1 {
+		t.Fatalf("Expected sub2 to have 1 dependency, got %d", len(usub.Steps[1].Dependencies))
+	}
+
+	depPtr := usub.Steps[1].Dependencies[0]
+	if depPtr == nil {
+		t.Fatal("Expected dependency pointer to be non-nil")
+	}
+	if depPtr.ID != "sub1" {
+		t.Fatalf("Expected dependency id 'sub1', got %q", depPtr.ID)
+	}
+	// The pointer should refer to the actual step struct inside the same sub-plan slice.
+	if depPtr != &usub.Steps[0] {
+		t.Fatal("Expected dependency pointer to point at sub-plan step instance")
+	}
+}
